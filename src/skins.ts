@@ -1,4 +1,8 @@
 import type { PetState } from "./types";
+import pandaIdle from "./skins/panda/idle.svg";
+import pandaTired from "./skins/panda/tired.svg";
+import pandaSleep from "./skins/panda/sleep.svg";
+import pandaDead from "./skins/panda/dead.svg";
 
 export type Skin = {
   id: string;
@@ -6,17 +10,15 @@ export type Skin = {
   frames: Record<PetState, string>;
 };
 
-const url = (path: string) => new URL(`./skins/${path}`, import.meta.url).href;
-
 export const SKINS: Skin[] = [
   {
     id: "panda",
     name: "Panda",
     frames: {
-      idle: url("panda/idle.png"),
-      tired: url("panda/tired.png"),
-      sleep: url("panda/sleep.png"),
-      dead: url("panda/dead.png"),
+      idle: pandaIdle,
+      tired: pandaTired,
+      sleep: pandaSleep,
+      dead: pandaDead,
     },
   },
 ];
