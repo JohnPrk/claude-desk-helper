@@ -21,14 +21,24 @@ fn set_macos_panel_behavior(window: &WebviewWindow) {
     if ns_window.is_null() {
         return;
     }
-    // NSWindowCollectionBehaviorCanJoinAllSpaces (1<<0)
-    //   | NSWindowCollectionBehaviorStationary (1<<4)
-    //   | NSWindowCollectionBehaviorFullScreenAuxiliary (1<<8)
-    let behavior: u64 = (1 << 0) | (1 << 4) | (1 << 8);
+    // We want the pet:
+    //   - to appear on every macOS Space (canJoinAllSpaces, 1<<0)
+    //   - to NOT slide along during Space-switch animation (stationary, 1<<4)
+    //   - to NOT participate in Cmd-` window cycling (ignoresCycle, 1<<6)
+    //   - to overlay fullscreen apps (fullScreenAuxiliary, 1<<8)
+    //
+    // Crucially we set this AFTER any tauri-side workspace tweaks have run,
+    // because tauri's set_visible_on_all_workspaces clears the stationary bit.
+    let behavior: u64 = (1 << 0) | (1 << 4) | (1 << 6) | (1 << 8);
+    // NSStatusWindowLevel (= kCGStatusWindowLevel = 25). Higher than
+    // NSFloatingWindowLevel (3) so the pet stays above tooltips and most
+    // overlays, and is reliably non-managed by Spaces.
+    let level: i64 = 25;
     unsafe {
         let _: () = msg_send![ns_window, setCollectionBehavior: behavior];
-        // NSFloatingWindowLevel = 3
-        let _: () = msg_send![ns_window, setLevel: 3i64];
+        let _: () = msg_send![ns_window, setLevel: level];
+        // Don't hide on miniaturize / app deactivate.
+        let _: () = msg_send![ns_window, setHidesOnDeactivate: false];
     }
 }
 
@@ -180,9 +190,21 @@ pub fn run() {
             build_tray(&handle)?;
 
             if let Some(window) = app.get_webview_window("main") {
-                let _ = window.set_visible_on_all_workspaces(true);
+                // Apply twice: once now, and once after the window has had a
+                // chance to settle (tauri/tao apply their own collection-
+                // behavior bits during early lifecycle). The second pass wins.
                 #[cfg(target_os = "macos")]
-                set_macos_panel_behavior(&window);
+                {
+                    set_macos_panel_behavior(&window);
+                    let w_for_thread = window.clone();
+                    std::thread::spawn(move || {
+                        std::thread::sleep(Duration::from_millis(200));
+                        let w_for_main = w_for_thread.clone();
+                        let _ = w_for_thread.run_on_main_thread(move || {
+                            set_macos_panel_behavior(&w_for_main);
+                        });
+                    });
+                }
             }
 
             let watcher = start_watcher(handle);
