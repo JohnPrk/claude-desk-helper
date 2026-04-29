@@ -101,13 +101,14 @@
   gap: 8px;
 }
 
-/* Cache bubble above the head */
-.cache-bubble-wrap {
-  height: 56px;
+/* Stack of bubbles above the head */
+.bubble-stack {
   display: flex;
-  align-items: flex-end;
-  justify-content: center;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
   z-index: 2;
+  min-height: 0;
 }
 .bubble {
   position: relative;
@@ -175,6 +176,32 @@
   color: #c87f00;
   font-weight: 600;
 }
+/* Tail only on the last bubble in the stack */
+.bubble::after { display: none; }
+.bubble-stack > .bubble:last-child::after { display: block; }
+
+/* Usage % bubble (between cache + panda) */
+.bubble.usage {
+  min-width: 96px;
+  padding: 5px 10px;
+}
+.usage-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  font-feature-settings: "tnum";
+}
+.usage-label {
+  color: #888;
+  font-size: 10px;
+}
+.usage-pct {
+  font-weight: 600;
+  font-size: 12px;
+}
+.usage-pct.warn { color: #d68a1f; }
+.usage-pct.danger { color: #d34141; }
 
 /* Character */
 .character {
@@ -264,60 +291,6 @@
   to { transform: rotate(-22deg) translateX(-2px); }
 }
 
-/* Gauges */
-.gauges {
-  width: 100%;
-  display: flex;
-  gap: 6px;
-  z-index: 2;
-}
-.gauge {
-  flex: 1;
-  background: rgba(255, 255, 255, 0.92);
-  border-radius: 10px;
-  padding: 6px 8px;
-  font-size: 10px;
-  color: #333;
-  border: 1px solid #e6e6e6;
-}
-.gauge.warn { border-color: #f5b85b; }
-.gauge.danger { border-color: #e35454; background: rgba(255, 232, 232, 0.92); }
-.gauge-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-}
-.gauge-label {
-  font-weight: 600;
-}
-.gauge-num {
-  font-feature-settings: "tnum";
-}
-.gauge-bar {
-  margin: 3px 0;
-  height: 5px;
-  background: #eee;
-  border-radius: 3px;
-  overflow: hidden;
-}
-.gauge-fill {
-  height: 100%;
-  background: linear-gradient(90deg, #6dd3a8, #6b4cff);
-  transition: width 0.5s ease;
-}
-.gauge.warn .gauge-fill { background: linear-gradient(90deg, #f5b85b, #ee7a44); }
-.gauge.danger .gauge-fill { background: linear-gradient(90deg, #e35454, #b22d2d); }
-.gauge-foot {
-  font-size: 9px;
-  color: #888;
-  font-feature-settings: "tnum";
-  display: flex;
-  justify-content: space-between;
-  gap: 4px;
-}
-.gauge-reset {
-  opacity: 0.85;
-}
 
 /* Top buttons */
 .gear, .close {
@@ -406,16 +379,72 @@
   border-color: #6b4cff;
 }
 
+.settings .link {
+  background: none;
+  border: none;
+  color: #6b4cff;
+  font: inherit;
+  font-size: 11px;
+  text-align: left;
+  padding: 2px 0;
+  cursor: pointer;
+  align-self: flex-start;
+}
+.settings .link:hover { text-decoration: underline; }
+
+.calibrator {
+  background: #f6f5fb;
+  border: 1px solid #e3dffa;
+  border-radius: 8px;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 11px;
+  color: #444;
+}
+.calibrator-help {
+  margin: 0;
+  font-size: 10px;
+  color: #777;
+  line-height: 1.45;
+}
+.calibrator-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 10px;
+  color: #666;
+}
+.calibrator-row code {
+  background: #ece9f8;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-family: ui-monospace, monospace;
+  font-size: 10px;
+  color: #333;
+}
+.calibrator label {
+  font-size: 10px;
+}
+.primary.slim { padding: 6px 10px; font-size: 11px; }
+
 @media (prefers-color-scheme: dark) {
   .onboarding,
   .bubble,
-  .gauge,
   .settings {
     background: rgba(30, 30, 36, 0.96);
     color: #eee;
     border-color: #3a3a44;
   }
-  .gauge { background: rgba(30, 30, 36, 0.85); }
+  .calibrator {
+    background: rgba(40, 36, 60, 0.85);
+    border-color: #3a3a52;
+    color: #ddd;
+  }
+  .calibrator-row code { background: #2a2638; color: #ddd; }
+  .usage-pct.warn { color: #ffbb6a; }
+  .usage-pct.danger { color: #ff7474; }
   .plan {
     background: #2a2a32;
     border-color: #3a3a44;

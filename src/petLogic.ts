@@ -4,8 +4,12 @@ export const CACHE_TTL_MS = 5 * 60 * 1000;
 export const CACHE_NUDGE_AT_MS = 4 * 60 * 1000;
 
 export type DerivedState = {
-  fiveHourPct: number;
-  weeklyPct: number;
+  /** Battery-style remaining %: 1.0 = full, 0.0 = exhausted */
+  fiveHourRemaining: number;
+  weeklyRemaining: number;
+  /** Used %, kept for notification logic */
+  fiveHourUsed: number;
+  weeklyUsed: number;
   petState: PetState;
   cacheRemainMs: number | null;
   cacheNudge: boolean;
@@ -20,8 +24,10 @@ export function derive(
 ): DerivedState {
   if (!snap) {
     return {
-      fiveHourPct: 0,
-      weeklyPct: 0,
+      fiveHourRemaining: 1,
+      weeklyRemaining: 1,
+      fiveHourUsed: 0,
+      weeklyUsed: 0,
       petState: "idle",
       cacheRemainMs: null,
       cacheNudge: false,
@@ -29,13 +35,20 @@ export function derive(
       weeklyResetMs: null,
     };
   }
-  const fiveHourPct = clampPct(snap.five_hour_tokens / Math.max(1, limits.fiveHour));
-  const weeklyPct = clampPct(snap.weekly_tokens / Math.max(1, limits.weekly));
+  const fiveHourUsed = clampPct(snap.five_hour_tokens / Math.max(1, limits.fiveHour));
+  const weeklyUsed = clampPct(snap.weekly_tokens / Math.max(1, limits.weekly));
+  const fiveHourRemaining = 1 - fiveHourUsed;
+  const weeklyRemaining = 1 - weeklyUsed;
 
+  // Pet state, battery-style:
+  //   - weekly empty   → dead
+  //   - 5h empty       → sleep
+  //   - either ≤ 30% remaining → tired
+  //   - else            → idle
   let petState: PetState = "idle";
-  if (weeklyPct >= 1) petState = "dead";
-  else if (fiveHourPct >= 1) petState = "sleep";
-  else if (weeklyPct >= 0.7 || fiveHourPct >= 0.7) petState = "tired";
+  if (weeklyRemaining <= 0) petState = "dead";
+  else if (fiveHourRemaining <= 0) petState = "sleep";
+  else if (weeklyRemaining <= 0.3 || fiveHourRemaining <= 0.3) petState = "tired";
 
   let cacheRemainMs: number | null = null;
   let cacheNudge = false;
@@ -56,8 +69,10 @@ export function derive(
     : null;
 
   return {
-    fiveHourPct,
-    weeklyPct,
+    fiveHourRemaining,
+    weeklyRemaining,
+    fiveHourUsed,
+    weeklyUsed,
     petState,
     cacheRemainMs,
     cacheNudge,
