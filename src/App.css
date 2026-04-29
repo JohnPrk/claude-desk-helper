@@ -100,11 +100,6 @@
   box-sizing: border-box;
   gap: 8px;
 }
-.drag-zone {
-  position: absolute;
-  inset: 0;
-  z-index: 0;
-}
 
 /* Cache bubble above the head */
 .cache-bubble-wrap {
@@ -187,6 +182,10 @@
   width: 130px;
   height: 130px;
   z-index: 1;
+  cursor: grab;
+}
+.character:active {
+  cursor: grabbing;
 }
 .character img,
 .character svg.placeholder-panda {

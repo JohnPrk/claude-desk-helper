@@ -7,7 +7,33 @@ use std::sync::Arc;
 use std::time::Duration;
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{TrayIconBuilder, TrayIconEvent};
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Emitter, Manager, WebviewWindow};
+
+#[cfg(target_os = "macos")]
+fn set_macos_panel_behavior(window: &WebviewWindow) {
+    use objc2::msg_send;
+    use objc2::runtime::AnyObject;
+
+    let Ok(ns_window) = window.ns_window() else {
+        return;
+    };
+    let ns_window = ns_window as *mut AnyObject;
+    if ns_window.is_null() {
+        return;
+    }
+    // NSWindowCollectionBehaviorCanJoinAllSpaces (1<<0)
+    //   | NSWindowCollectionBehaviorStationary (1<<4)
+    //   | NSWindowCollectionBehaviorFullScreenAuxiliary (1<<8)
+    let behavior: u64 = (1 << 0) | (1 << 4) | (1 << 8);
+    unsafe {
+        let _: () = msg_send![ns_window, setCollectionBehavior: behavior];
+        // NSFloatingWindowLevel = 3
+        let _: () = msg_send![ns_window, setLevel: 3i64];
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn set_macos_panel_behavior(_window: &WebviewWindow) {}
 
 struct WatcherState {
     _debouncer: Mutex<Option<Box<dyn std::any::Any + Send>>>,
@@ -152,6 +178,13 @@ pub fn run() {
             }
             let handle = app.handle().clone();
             build_tray(&handle)?;
+
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.set_visible_on_all_workspaces(true);
+                #[cfg(target_os = "macos")]
+                set_macos_panel_behavior(&window);
+            }
+
             let watcher = start_watcher(handle);
             app.manage(watcher);
             Ok(())

@@ -204,21 +204,22 @@ function Pet({
 
   return (
     <div className="pet-root">
-      <div
-        className="drag-zone"
-        data-tauri-drag-region
-      />
       <div className="cache-bubble-wrap">
         {d.cacheRemainMs !== null && (
           <CacheBubble remainMs={d.cacheRemainMs} nudge={d.cacheNudge} />
         )}
       </div>
 
-      <div className="character" data-state={d.petState}>
+      <div
+        className="character"
+        data-state={d.petState}
+        data-tauri-drag-region
+      >
         <img
           src={skin.frames[d.petState]}
           alt={d.petState}
           draggable={false}
+          data-tauri-drag-region
           onError={(e) => {
             (e.currentTarget as HTMLImageElement).style.opacity = "0";
           }}
