@@ -10,6 +10,7 @@ import {
   CACHE_TTL_MS,
   derive,
   formatRemain,
+  formatResetCountdown,
   formatTokens,
 } from "./petLogic";
 import { maybeNotify, resetThreshold } from "./notifier";
@@ -152,6 +153,8 @@ function Pet({
   const [now, setNow] = useState(Date.now());
   const [showSettings, setShowSettings] = useState(false);
   const [idleAction, setIdleAction] = useState<IdleAction>("none");
+  const [flash, setFlash] = useState<"hit" | "miss" | null>(null);
+  const [seenCounts, setSeenCounts] = useState({ hits: -1, misses: -1 });
 
   useEffect(() => {
     invoke<UsageSnapshot>("get_usage_snapshot").then(setSnap).catch(() => {});
@@ -166,6 +169,27 @@ function Pet({
   }, []);
 
   const d = useMemo(() => derive(snap, config.limits, now), [snap, config, now]);
+
+  // Cache hit/miss flash effect: detect deltas in counts and pulse the panda
+  useEffect(() => {
+    if (!snap) return;
+    const { cache_hits_5min: h, cache_misses_5min: m } = snap;
+    if (seenCounts.hits === -1) {
+      // First load — initialize without firing effects
+      setSeenCounts({ hits: h, misses: m });
+      return;
+    }
+    let trigger: "hit" | "miss" | null = null;
+    if (h > seenCounts.hits) trigger = "hit";
+    else if (m > seenCounts.misses) trigger = "miss";
+    if (trigger) {
+      setFlash(trigger);
+      const t = setTimeout(() => setFlash(null), 900);
+      setSeenCounts({ hits: h, misses: m });
+      return () => clearTimeout(t);
+    }
+    setSeenCounts({ hits: h, misses: m });
+  }, [snap?.cache_hits_5min, snap?.cache_misses_5min]);
 
   // Idle micro-actions
   useEffect(() => {
@@ -242,16 +266,28 @@ function Pet({
 
   const skin = findSkin(config.skin);
 
+  const showCache =
+    d.cacheRemainMs !== null && !(snap?.is_thinking ?? false);
+
   return (
     <div className="pet-root">
       <div className="bubble-stack">
-        {d.cacheRemainMs !== null && (
-          <CacheBubble remainMs={d.cacheRemainMs} nudge={d.cacheNudge} />
+        {showCache && (
+          <CacheBubble
+            remainMs={d.cacheRemainMs!}
+            nudge={d.cacheNudge}
+            hits={snap!.cache_hits_5min}
+            misses={snap!.cache_misses_5min}
+            combo={snap!.current_combo}
+          />
         )}
+        {snap?.is_thinking && <ThinkingBubble />}
         {snap && (
           <UsageBubble
             fiveRemaining={d.fiveHourRemaining}
             weeklyRemaining={d.weeklyRemaining}
+            fiveResetMs={d.fiveHourResetMs}
+            weeklyResetMs={d.weeklyResetMs}
           />
         )}
       </div>
@@ -260,6 +296,7 @@ function Pet({
         className="character"
         data-state={d.petState}
         data-action={idleAction}
+        data-flash={flash ?? ""}
         data-tauri-drag-region
       >
         <img
@@ -274,6 +311,11 @@ function Pet({
         <PlaceholderPanda state={d.petState} />
         {idleAction === "bamboo" && (
           <img className="bamboo" src={ACCESSORIES.bamboo} alt="" draggable={false} />
+        )}
+        {flash && (
+          <div className={`flash-overlay flash-${flash}`}>
+            <span className="flash-mark">{flash === "hit" ? "✨" : "💨"}</span>
+          </div>
         )}
       </div>
 
@@ -307,7 +349,19 @@ function Pet({
   );
 }
 
-function CacheBubble({ remainMs, nudge }: { remainMs: number; nudge: boolean }) {
+function CacheBubble({
+  remainMs,
+  nudge,
+  hits,
+  misses,
+  combo,
+}: {
+  remainMs: number;
+  nudge: boolean;
+  hits: number;
+  misses: number;
+  combo: number;
+}) {
   const pct = Math.max(0, Math.min(1, remainMs / CACHE_TTL_MS));
   return (
     <div className={`bubble cache ${nudge ? "nudge" : ""}`}>
@@ -318,7 +372,25 @@ function CacheBubble({ remainMs, nudge }: { remainMs: number; nudge: boolean }) 
       <div className="bubble-bar">
         <div className="bubble-fill" style={{ width: `${pct * 100}%` }} />
       </div>
+      {(hits > 0 || misses > 0) && (
+        <div className="bubble-stats">
+          <span className="stat hit">✨{hits}</span>
+          <span className="stat miss">💨{misses}</span>
+          {combo >= 2 && <span className="stat combo">🔥×{combo}</span>}
+        </div>
+      )}
       {nudge && <div className="bubble-tip">. 이라도 눌러!</div>}
+    </div>
+  );
+}
+
+function ThinkingBubble() {
+  return (
+    <div className="bubble thinking">
+      <span className="dots">
+        <span/><span/><span/>
+      </span>
+      <span className="thinking-label">생각 중</span>
     </div>
   );
 }
@@ -326,9 +398,13 @@ function CacheBubble({ remainMs, nudge }: { remainMs: number; nudge: boolean }) 
 function UsageBubble({
   fiveRemaining,
   weeklyRemaining,
+  fiveResetMs,
+  weeklyResetMs,
 }: {
   fiveRemaining: number;
   weeklyRemaining: number;
+  fiveResetMs: number | null;
+  weeklyResetMs: number | null;
 }) {
   return (
     <div className="bubble usage">
@@ -337,12 +413,18 @@ function UsageBubble({
         <span className={`usage-pct ${toneOf(fiveRemaining)}`}>
           {Math.round(fiveRemaining * 100)}%
         </span>
+        {fiveResetMs !== null && (
+          <span className="usage-reset">{formatResetCountdown(fiveResetMs)}</span>
+        )}
       </div>
       <div className="usage-row">
         <span className="usage-label">주간</span>
         <span className={`usage-pct ${toneOf(weeklyRemaining)}`}>
           {Math.round(weeklyRemaining * 100)}%
         </span>
+        {weeklyResetMs !== null && (
+          <span className="usage-reset">{formatResetCountdown(weeklyResetMs)}</span>
+        )}
       </div>
     </div>
   );
@@ -498,7 +580,7 @@ function Calibrator({
         Claude UI의 5h 사용 %
         <input
           type="number"
-          placeholder="예: 30"
+          placeholder="예: 53"
           value={fivePct}
           onChange={(e) => setFivePct(e.target.value)}
         />
@@ -507,11 +589,25 @@ function Calibrator({
         Claude UI의 주간 사용 %
         <input
           type="number"
-          placeholder="예: 36"
+          placeholder="예: 39"
           value={weekPct}
           onChange={(e) => setWeekPct(e.target.value)}
         />
       </label>
+      {(Number(fivePct) > 0 || Number(weekPct) > 0) && (
+        <div className="calibrator-preview">
+          저장 후 펫 표시:
+          {Number(fivePct) > 0 && (
+            <code>5h {100 - Number(fivePct)}% 남음</code>
+          )}
+          {Number(weekPct) > 0 && (
+            <code>주간 {100 - Number(weekPct)}% 남음</code>
+          )}
+          <span className="calibrator-note">
+            (배터리 스타일이라 100 − 사용% = 남은%로 표시됩니다)
+          </span>
+        </div>
+      )}
       <button type="button" className="primary slim" onClick={compute}>
         한도 계산해서 Custom에 적용
       </button>

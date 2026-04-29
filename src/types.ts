@@ -2,10 +2,15 @@ export type UsageSnapshot = {
   five_hour_tokens: number;
   weekly_tokens: number;
   last_request_at: string | null;
+  last_user_prompt_at: string | null;
+  is_thinking: boolean;
   five_hour_window_start: string | null;
   five_hour_resets_at: string | null;
   weekly_window_start: string | null;
   weekly_resets_at: string | null;
+  cache_hits_5min: number;
+  cache_misses_5min: number;
+  current_combo: number;
   now: string;
 };
 
