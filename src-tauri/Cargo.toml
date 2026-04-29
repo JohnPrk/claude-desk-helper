@@ -26,9 +26,11 @@ tauri-plugin-notification = "2"
 notify = "6"
 notify-debouncer-mini = "0.4"
 chrono = { version = "0.4", features = ["serde"] }
+chrono-tz = "0.9"
 dirs = "5"
 walkdir = "2"
 parking_lot = "0.12"
 
 [target."cfg(target_os = \"macos\")".dependencies]
 objc2 = "0.5"
+libloading = "0.8"

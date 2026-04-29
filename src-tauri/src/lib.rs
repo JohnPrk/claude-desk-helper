@@ -30,37 +30,176 @@ fn set_macos_accessory_app() {
 fn set_macos_accessory_app() {}
 
 #[cfg(target_os = "macos")]
-fn set_macos_panel_behavior(window: &WebviewWindow) {
+mod macos_pinning {
     use objc2::msg_send;
     use objc2::runtime::AnyObject;
+    use std::os::raw::{c_int, c_void};
+    use std::sync::OnceLock;
+    use tauri::WebviewWindow;
 
-    let Ok(ns_window) = window.ns_window() else {
-        return;
-    };
-    let ns_window = ns_window as *mut AnyObject;
-    if ns_window.is_null() {
-        return;
+    // NSWindowCollectionBehavior bits (NSWindow.h)
+    const CB_CAN_JOIN_ALL_SPACES: u64 = 1 << 0;
+    const CB_MOVE_TO_ACTIVE_SPACE: u64 = 1 << 1;
+    const CB_MANAGED: u64 = 1 << 2;
+    const CB_TRANSIENT: u64 = 1 << 3;
+    const CB_STATIONARY: u64 = 1 << 4;
+    const CB_PARTICIPATES_IN_CYCLE: u64 = 1 << 5;
+    const CB_IGNORES_CYCLE: u64 = 1 << 6;
+    const CB_FULLSCREEN_PRIMARY: u64 = 1 << 7;
+    const CB_FULLSCREEN_AUXILIARY: u64 = 1 << 8;
+    const CB_FULLSCREEN_NONE: u64 = 1 << 9;
+    const CB_FULLSCREEN_ALLOWS_TILING: u64 = 1 << 11;
+    const CB_FULLSCREEN_DISALLOWS_TILING: u64 = 1 << 12;
+    const CB_PRIMARY: u64 = 1 << 16;
+    const CB_AUXILIARY: u64 = 1 << 17;
+    const CB_CAN_JOIN_ALL_APPS: u64 = 1 << 18;
+
+    // Window level used by clawd: CGAssistiveTechHighWindowLevel = 1500.
+    // Far above NSStatusWindowLevel (25), survives Mission Control overlays.
+    const ASSISTIVE_LEVEL: i64 = 1500;
+    // NSWindowAnimationBehaviorNone = 2.
+    const ANIM_NONE: i64 = 2;
+
+    type SLSMainConnectionID = unsafe extern "C" fn() -> c_int;
+    type SLSSpaceCreate = unsafe extern "C" fn(c_int, c_int, c_int) -> c_int;
+    type SLSSpaceSetAbsoluteLevel = unsafe extern "C" fn(c_int, c_int, c_int) -> c_int;
+    type SLSShowSpaces = unsafe extern "C" fn(c_int, *const c_void) -> c_int;
+    type SLSSpaceAddWindowsAndRemoveFromSpaces =
+        unsafe extern "C" fn(c_int, c_int, *const c_void, c_int) -> c_int;
+
+    struct SkyLight {
+        _lib: libloading::Library,
+        connection: c_int,
+        space: c_int,
+        add_windows_fn: SLSSpaceAddWindowsAndRemoveFromSpaces,
     }
-    // Pet behavior we want:
-    //   - canJoinAllSpaces (1<<0)        appear on every Space
-    //   - stationary       (1<<4)        don't slide with Space switches
-    //   - ignoresCycle     (1<<6)        skip Cmd-` cycling
-    //   - fullScreenAuxiliary (1<<8)     overlay fullscreen apps
-    let behavior: u64 = (1 << 0) | (1 << 4) | (1 << 6) | (1 << 8);
-    // kCGFloatingWindowLevelKey-equivalent that survives Mission Control:
-    // NSStatusWindowLevel = 25.
-    let level: i64 = 25;
-    unsafe {
-        let _: () = msg_send![ns_window, setCollectionBehavior: behavior];
-        let _: () = msg_send![ns_window, setLevel: level];
-        let _: () = msg_send![ns_window, setHidesOnDeactivate: false];
-        // Disable the per-Space slide animation entirely. Without this the
-        // window can still briefly travel during the transition even with
-        // 'stationary' set — NSWindowAnimationBehaviorNone freezes that.
-        // NSWindowAnimationBehaviorNone = 2
-        let _: () = msg_send![ns_window, setAnimationBehavior: 2i64];
-        // setMovableByWindowBackground stays true (we drag from the panda).
+
+    fn skylight() -> Option<&'static SkyLight> {
+        static CELL: OnceLock<Option<SkyLight>> = OnceLock::new();
+        CELL.get_or_init(|| unsafe {
+            let lib = libloading::Library::new(
+                "/System/Library/PrivateFrameworks/SkyLight.framework/Versions/A/SkyLight",
+            ).ok()?;
+
+            let main_conn: libloading::Symbol<SLSMainConnectionID> =
+                lib.get(b"SLSMainConnectionID\0").ok()?;
+            let space_create: libloading::Symbol<SLSSpaceCreate> =
+                lib.get(b"SLSSpaceCreate\0").ok()?;
+            let space_abs_level: libloading::Symbol<SLSSpaceSetAbsoluteLevel> =
+                lib.get(b"SLSSpaceSetAbsoluteLevel\0").ok()?;
+            let show_spaces: libloading::Symbol<SLSShowSpaces> =
+                lib.get(b"SLSShowSpaces\0").ok()?;
+            let add_windows: libloading::Symbol<SLSSpaceAddWindowsAndRemoveFromSpaces> =
+                lib.get(b"SLSSpaceAddWindowsAndRemoveFromSpaces\0").ok()?;
+
+            let connection = main_conn();
+            let space = space_create(connection, 1, 0);
+            if space == 0 {
+                return None;
+            }
+            // Absolute level 100 puts this Space outside the user's
+            // left/right Mission Control swipe animation entirely.
+            space_abs_level(connection, space, 100);
+
+            // SLSShowSpaces wants an NSArray of NSNumber. Build via objc.
+            if let Some(arr) = ns_number_array(space) {
+                show_spaces(connection, arr);
+            }
+
+            let add_windows_fn: SLSSpaceAddWindowsAndRemoveFromSpaces = *add_windows;
+            Some(SkyLight {
+                _lib: lib,
+                connection,
+                space,
+                add_windows_fn,
+            })
+        }).as_ref()
     }
+
+    fn ns_number_array(value: c_int) -> Option<*const c_void> {
+        use objc2::class;
+        unsafe {
+            let cls_num = class!(NSNumber);
+            let cls_arr = class!(NSArray);
+            let num: *mut AnyObject = msg_send![cls_num, numberWithInt: value];
+            if num.is_null() {
+                return None;
+            }
+            let arr: *mut AnyObject = msg_send![cls_arr, arrayWithObject: num];
+            if arr.is_null() {
+                return None;
+            }
+            Some(arr as *const c_void)
+        }
+    }
+
+    fn delegate_window_to_stationary_space(ns_window: *mut AnyObject) -> bool {
+        let Some(sl) = skylight() else { return false };
+        unsafe {
+            let window_number: i64 = msg_send![ns_window, windowNumber];
+            if window_number == 0 {
+                return false;
+            }
+            let Some(arr) = ns_number_array(window_number as c_int) else {
+                return false;
+            };
+            // Last arg `7` matches clawd's call: bitmask for which existing
+            // Space memberships to remove the window from.
+            let _ = (sl.add_windows_fn)(sl.connection, sl.space, arr, 7);
+            true
+        }
+    }
+
+    pub fn apply(window: &WebviewWindow) {
+        let Ok(ptr) = window.ns_window() else { return };
+        let ns_window = ptr as *mut AnyObject;
+        if ns_window.is_null() {
+            return;
+        }
+
+        unsafe {
+            // Clear bits that pull the window into Spaces management, then
+            // explicitly set the bits we want. This is the pattern clawd
+            // uses (mac-window.js:154) — relying on plain set-mask alone
+            // leaves stale Managed/MoveToActiveSpace bits and the OS
+            // continues to slide the window across Spaces.
+            let current: u64 = msg_send![ns_window, collectionBehavior];
+            let clear_mask = CB_MOVE_TO_ACTIVE_SPACE
+                | CB_MANAGED
+                | CB_TRANSIENT
+                | CB_PARTICIPATES_IN_CYCLE
+                | CB_FULLSCREEN_PRIMARY
+                | CB_FULLSCREEN_NONE
+                | CB_FULLSCREEN_ALLOWS_TILING
+                | CB_PRIMARY
+                | CB_AUXILIARY
+                | CB_CAN_JOIN_ALL_APPS;
+            let set_mask = CB_CAN_JOIN_ALL_SPACES
+                | CB_STATIONARY
+                | CB_FULLSCREEN_AUXILIARY
+                | CB_IGNORES_CYCLE
+                | CB_FULLSCREEN_DISALLOWS_TILING;
+            let next = (current & !clear_mask) | set_mask;
+            if next != current {
+                let _: () = msg_send![ns_window, setCollectionBehavior: next];
+            }
+
+            let _: () = msg_send![ns_window, setCanHide: false];
+            let _: () = msg_send![ns_window, setHidesOnDeactivate: false];
+            let _: () = msg_send![ns_window, setLevel: ASSISTIVE_LEVEL];
+            let _: () = msg_send![ns_window, setAnimationBehavior: ANIM_NONE];
+        }
+
+        // Final and most important step: SkyLight private-API delegation.
+        // Without this, the OS still applies Space-switch transforms to our
+        // window even with stationary set. clawd discovered the same.
+        delegate_window_to_stationary_space(ns_window);
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn set_macos_panel_behavior(window: &WebviewWindow) {
+    macos_pinning::apply(window);
 }
 
 #[cfg(not(target_os = "macos"))]

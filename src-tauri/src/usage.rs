@@ -1,4 +1,5 @@
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Datelike, Duration, TimeZone, Timelike, Utc, Weekday};
+use chrono_tz::Asia::Seoul;
 use serde::{Deserialize, Serialize};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
@@ -70,6 +71,54 @@ enum Role {
     Assistant,
     UserPrompt,
     UserToolResult,
+}
+
+/// Next instance of the given weekday at the given hour:minute in
+/// Asia/Seoul timezone, returned as UTC. If `now` (in KST) is already past
+/// today's hh:mm on the same weekday, jumps a week.
+fn next_weekday_at(now_utc: DateTime<Utc>, day: Weekday, hour: u32, minute: u32) -> DateTime<Utc> {
+    let now_kst = now_utc.with_timezone(&Seoul);
+    let mut delta_days = (day.num_days_from_monday() as i64
+        - now_kst.weekday().num_days_from_monday() as i64
+        + 7)
+        % 7;
+    let candidate = Seoul
+        .with_ymd_and_hms(
+            now_kst.year(),
+            now_kst.month(),
+            now_kst.day(),
+            hour,
+            minute,
+            0,
+        )
+        .single()
+        .unwrap_or(now_kst)
+        + Duration::days(delta_days);
+    if candidate <= now_kst {
+        // already past this week's reset on the same weekday
+        if delta_days == 0 {
+            delta_days = 7;
+        }
+    }
+    let target = Seoul
+        .with_ymd_and_hms(
+            now_kst.year(),
+            now_kst.month(),
+            now_kst.day(),
+            hour,
+            minute,
+            0,
+        )
+        .single()
+        .unwrap_or(now_kst)
+        + Duration::days(delta_days);
+    let target = if target <= now_kst {
+        target + Duration::days(7)
+    } else {
+        target
+    };
+    let _ = now_kst.hour(); // suppress unused warning if any
+    target.with_timezone(&Utc)
 }
 
 pub fn claude_projects_dir() -> Option<PathBuf> {
@@ -263,7 +312,11 @@ pub fn snapshot() -> UsageSnapshot {
         }
     }
 
-    let weekly_reset = weekly_first.map(|s| s + Duration::days(WEEKLY_LOOKBACK_DAYS));
+    // Anthropic's weekly window resets on a fixed weekday for each account.
+    // Until/unless we expose a setting, default to Friday 06:00 KST — that's
+    // what shows up in Claude UI for accounts in this region.
+    let weekly_reset = Some(next_weekday_at(now, Weekday::Fri, 6, 0));
+    let _ = weekly_first; // kept for future use; reset is now anchor-based
 
     let is_thinking = match (last_user_prompt_at, last_assistant_at) {
         (Some(u), Some(a)) => u > a,
