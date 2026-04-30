@@ -440,6 +440,30 @@ pub fn run() {
                             _ => {}
                         }
                     });
+
+                    // 4) Periodic re-application (~1.5s). Window focus
+                    //    events only fire on OUR window's transitions; when
+                    //    another app activates and visually covers our
+                    //    SkyLight Space, we don't get an event. Without
+                    //    this tick the panda only reappears after the user
+                    //    clicks somewhere — exactly the symptom users
+                    //    reported as "I click the image, panda disappears
+                    //    until I click again." 1.5s is the slowest that
+                    //    feels instant; faster wastes CPU on a no-op
+                    //    SLSShowSpaces call.
+                    let w_for_tick = window.clone();
+                    std::thread::spawn(move || loop {
+                        std::thread::sleep(Duration::from_millis(1500));
+                        let w = w_for_tick.clone();
+                        if w_for_tick
+                            .run_on_main_thread(move || {
+                                set_macos_panel_behavior(&w);
+                            })
+                            .is_err()
+                        {
+                            break;
+                        }
+                    });
                 }
             }
 
