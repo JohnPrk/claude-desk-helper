@@ -15,7 +15,27 @@ import {
 import { maybeNotify, resetThreshold } from "./notifier";
 import "./App.css";
 
-type IdleAction = "none" | "roll" | "bamboo";
+type IdleAction =
+  | "none"
+  | "roll"
+  | "bamboo"
+  | "jump"
+  | "spin"
+  | "run"
+  | "shy"
+  | "doze"
+  | "scratch";
+
+const IDLE_ACTIONS: ReadonlyArray<{ name: Exclude<IdleAction, "none">; durationMs: number }> = [
+  { name: "roll", durationMs: 1600 },
+  { name: "bamboo", durationMs: 4500 },
+  { name: "jump", durationMs: 1200 },
+  { name: "spin", durationMs: 1800 },
+  { name: "run", durationMs: 2500 },
+  { name: "shy", durationMs: 2800 },
+  { name: "doze", durationMs: 3800 },
+  { name: "scratch", durationMs: 3000 },
+];
 
 // Battery-style: notify when remaining drops to these thresholds.
 const REMAINING_THRESHOLDS: Array<[number, string]> = [
@@ -201,17 +221,16 @@ function Pet({
     let cancelled = false;
     let actionTimeout: ReturnType<typeof setTimeout> | undefined;
     const schedule = () => {
-      const wait = 12_000 + Math.random() * 10_000;
+      const wait = 6_000 + Math.random() * 6_000; // 6~12s between actions
       actionTimeout = setTimeout(() => {
         if (cancelled) return;
-        const next: IdleAction = Math.random() < 0.55 ? "bamboo" : "roll";
-        setIdleAction(next);
-        const dur = next === "bamboo" ? 4500 : 1600;
+        const pick = IDLE_ACTIONS[Math.floor(Math.random() * IDLE_ACTIONS.length)];
+        setIdleAction(pick.name);
         actionTimeout = setTimeout(() => {
           if (cancelled) return;
           setIdleAction("none");
           schedule();
-        }, dur);
+        }, pick.durationMs);
       }, wait);
     };
     schedule();
@@ -301,7 +320,11 @@ function Pet({
         data-tauri-drag-region
       >
         <img
-          src={skin.frames[d.petState]}
+          src={
+            idleAction === "doze"
+              ? skin.frames.sleep
+              : skin.frames[d.petState]
+          }
           alt={d.petState}
           draggable={false}
           data-tauri-drag-region
@@ -310,9 +333,18 @@ function Pet({
           }}
         />
         <PlaceholderPanda state={d.petState} />
-        {idleAction === "bamboo" && (
-          <img className="bamboo" src={ACCESSORIES.bamboo} alt="" draggable={false} />
+        {(idleAction === "bamboo" || idleAction === "scratch") && (
+          <img
+            className={`bamboo bamboo-${idleAction}`}
+            src={ACCESSORIES.bamboo}
+            alt=""
+            draggable={false}
+          />
         )}
+        {idleAction === "shy" && <span className="action-emoji shy-emoji">💕</span>}
+        {idleAction === "run" && <span className="action-emoji run-emoji">💨</span>}
+        {idleAction === "jump" && <span className="action-emoji jump-emoji">!</span>}
+        {idleAction === "doze" && <span className="action-emoji doze-emoji">z</span>}
         {flash && (
           <div className={`flash-overlay flash-${flash}`}>
             <span className="flash-mark">{flash === "hit" ? "✨" : "💨"}</span>
