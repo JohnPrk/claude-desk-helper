@@ -15,6 +15,51 @@ import {
 import { maybeNotify, resetThreshold } from "./notifier";
 import "./App.css";
 
+// Action set + wait gap, conditioned on the panda's current energy tier.
+// Energetic actions (jump/run/spin/exercise/front-roll) only happen at idle
+// or cheerful; sluggish ones (lying/doze) only at weary or sleepy.
+function allowedActionsFor(state: string) {
+  const energetic = new Set(["roll", "jump", "spin", "run", "front-roll", "exercise", "wave"]);
+  const calm = new Set(["bamboo", "eat-fruit", "scratch", "shy", "wave"]);
+  const sluggish = new Set(["doze", "lying", "scratch", "shy"]);
+
+  let names: Set<string>;
+  switch (state) {
+    case "idle":
+    case "cheerful":
+      names = new Set([...energetic, ...calm]);
+      break;
+    case "tired":
+      names = new Set([...calm, "spin", "wave"]);
+      break;
+    case "weary":
+    case "sleepy":
+      names = sluggish;
+      break;
+    default:
+      return [];
+  }
+  return IDLE_ACTIONS.filter((a) => names.has(a.name));
+}
+
+// Wait between actions, by tier — peppier states act more often.
+function waitMsFor(state: string): [number, number] {
+  switch (state) {
+    case "idle":
+      return [4_500, 5_500];      // ~5-10s
+    case "cheerful":
+      return [6_000, 6_000];      // ~6-12s
+    case "tired":
+      return [9_000, 7_000];      // ~9-16s
+    case "weary":
+      return [13_000, 9_000];     // ~13-22s
+    case "sleepy":
+      return [18_000, 12_000];    // ~18-30s
+    default:
+      return [10_000, 10_000];
+  }
+}
+
 type IdleAction =
   | "none"
   | "roll"
@@ -24,9 +69,15 @@ type IdleAction =
   | "run"
   | "shy"
   | "doze"
-  | "scratch";
+  | "scratch"
+  | "wave"
+  | "lying"
+  | "front-roll"
+  | "eat-fruit"
+  | "exercise";
 
 const IDLE_ACTIONS: ReadonlyArray<{ name: Exclude<IdleAction, "none">; durationMs: number }> = [
+  // Existing
   { name: "roll", durationMs: 1600 },
   { name: "bamboo", durationMs: 4500 },
   { name: "jump", durationMs: 1200 },
@@ -35,6 +86,12 @@ const IDLE_ACTIONS: ReadonlyArray<{ name: Exclude<IdleAction, "none">; durationM
   { name: "shy", durationMs: 2800 },
   { name: "doze", durationMs: 3800 },
   { name: "scratch", durationMs: 3000 },
+  // New
+  { name: "wave", durationMs: 2000 },        // 인사 (앞발 들기)
+  { name: "lying", durationMs: 4000 },        // 누워서 뒹굴뒹굴
+  { name: "front-roll", durationMs: 1400 },   // 앞구르기
+  { name: "eat-fruit", durationMs: 4000 },    // 사과 먹기
+  { name: "exercise", durationMs: 3200 },     // 운동
 ];
 
 // Battery-style: notify when remaining drops to these thresholds.
@@ -212,19 +269,26 @@ function Pet({
     setSeenCounts({ hits: h, misses: m });
   }, [snap?.cache_hits_5min, snap?.cache_misses_5min]);
 
-  // Idle micro-actions
+  // Idle micro-actions: filtered by current energy tier so a sleepy panda
+  // doesn't spontaneously start exercising. sleep/dead never trigger any.
   useEffect(() => {
-    if (d.petState !== "idle") {
+    if (d.petState === "sleep" || d.petState === "dead") {
+      setIdleAction("none");
+      return;
+    }
+    const allowed = allowedActionsFor(d.petState);
+    if (allowed.length === 0) {
       setIdleAction("none");
       return;
     }
     let cancelled = false;
     let actionTimeout: ReturnType<typeof setTimeout> | undefined;
+    const tierGap = waitMsFor(d.petState);
     const schedule = () => {
-      const wait = 6_000 + Math.random() * 6_000; // 6~12s between actions
+      const wait = tierGap[0] + Math.random() * tierGap[1];
       actionTimeout = setTimeout(() => {
         if (cancelled) return;
-        const pick = IDLE_ACTIONS[Math.floor(Math.random() * IDLE_ACTIONS.length)];
+        const pick = allowed[Math.floor(Math.random() * allowed.length)];
         setIdleAction(pick.name);
         actionTimeout = setTimeout(() => {
           if (cancelled) return;
@@ -246,7 +310,11 @@ function Pet({
     const emoji =
       d.petState === "dead" ? "💀" :
       d.petState === "sleep" ? "💤" :
-      d.petState === "tired" ? "🪫" : "🔋";
+      d.petState === "sleepy" ? "😴" :
+      d.petState === "weary" ? "🪫" :
+      d.petState === "tired" ? "🪫" :
+      d.petState === "cheerful" ? "🔋" :
+      "🔋";
     const title = `${emoji} ${Math.round(lowest * 100)}%`;
     invoke("set_tray_title", { title }).catch(() => {});
   }, [d.fiveHourRemaining, d.weeklyRemaining, d.petState]);
@@ -341,10 +409,18 @@ function Pet({
             draggable={false}
           />
         )}
+        {idleAction === "eat-fruit" && (
+          <img className="bamboo bamboo-eat-fruit" src={ACCESSORIES.apple} alt="" draggable={false} />
+        )}
+        {idleAction === "exercise" && (
+          <img className="bamboo bamboo-exercise" src={ACCESSORIES.dumbbell} alt="" draggable={false} />
+        )}
         {idleAction === "shy" && <span className="action-emoji shy-emoji">💕</span>}
         {idleAction === "run" && <span className="action-emoji run-emoji">💨</span>}
         {idleAction === "jump" && <span className="action-emoji jump-emoji">!</span>}
         {idleAction === "doze" && <span className="action-emoji doze-emoji">z</span>}
+        {idleAction === "wave" && <span className="action-emoji wave-emoji">👋</span>}
+        {idleAction === "exercise" && <span className="action-emoji exercise-emoji">💪</span>}
         {flash && (
           <div className={`flash-overlay flash-${flash}`}>
             <span className="flash-mark">{flash === "hit" ? "✨" : "💨"}</span>

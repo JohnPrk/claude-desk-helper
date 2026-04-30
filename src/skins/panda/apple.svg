@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 60 60" width="60" height="60">
+  <defs>
+    <radialGradient id="apple-grad" cx="0.4" cy="0.35" r="0.65">
+      <stop offset="0" stop-color="#ff8c8c"/>
+      <stop offset="1" stop-color="#c5212f"/>
+    </radialGradient>
+  </defs>
+  <!-- leaf -->
+  <path d="M30 10 Q40 4 44 14 Q34 14 30 10 Z" fill="#74b56a" stroke="#3f7536" stroke-width="1.4"/>
+  <!-- stem -->
+  <path d="M30 14 L30 22" stroke="#5a3d22" stroke-width="2" stroke-linecap="round"/>
+  <!-- body -->
+  <path d="M30 22 C12 20 8 38 16 50 C22 58 38 58 44 50 C52 38 48 20 30 22 Z" fill="url(#apple-grad)" stroke="#7d1822" stroke-width="1.6"/>
+  <!-- highlight -->
+  <ellipse cx="22" cy="32" rx="4" ry="6" fill="#fff" opacity="0.45"/>
+</svg>

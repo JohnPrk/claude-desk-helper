@@ -340,12 +340,55 @@
   animation: doze 1.9s ease-in-out 2;
   filter: saturate(0.85);
 }
-.character[data-state="idle"][data-action="scratch"] {
+.character[data-state="idle"][data-action="scratch"],
+.character[data-state="cheerful"][data-action="scratch"],
+.character[data-state="tired"][data-action="scratch"],
+.character[data-state="weary"][data-action="scratch"],
+.character[data-state="sleepy"][data-action="scratch"] {
   animation: scratch 0.32s ease-in-out 9;
 }
+
+/* New idle actions — usable from any non-asleep state */
+.character[data-action="wave"] {
+  animation: wave 0.5s ease-in-out 4;
+}
+.character[data-action="lying"] {
+  animation: lying 4s ease-in-out;
+}
+.character[data-action="front-roll"] {
+  animation: front-roll 1.4s cubic-bezier(.5,.05,.5,.95);
+}
+.character[data-action="eat-fruit"] {
+  animation: chew 0.6s ease-in-out infinite;
+}
+.character[data-action="exercise"] {
+  animation: exercise 0.4s ease-in-out 8;
+}
+
+/* Apply the energetic full-energy bob+sway across both idle and cheerful */
+.character[data-state="cheerful"] {
+  animation: bob 2.8s ease-in-out infinite, sway 6s ease-in-out infinite;
+}
+.character[data-state="cheerful"][data-action="bamboo"] { animation: chew 0.55s ease-in-out infinite; }
+.character[data-state="cheerful"][data-action="roll"] { animation: roll 1.5s cubic-bezier(.5,.05,.5,.95); }
+.character[data-state="cheerful"][data-action="jump"] { animation: jump 1.2s cubic-bezier(.45,.05,.55,.95); }
+.character[data-state="cheerful"][data-action="spin"] { animation: spin 1.8s ease-in-out; }
+.character[data-state="cheerful"][data-action="run"] { animation: run 0.42s ease-in-out 6; }
+.character[data-state="cheerful"][data-action="shy"] { animation: shy 0.7s ease-in-out 4; }
+.character[data-state="cheerful"][data-action="doze"] { animation: doze 1.9s ease-in-out 2; }
+
 .character[data-state="tired"] {
   animation: bob 4s ease-in-out infinite, sway 8s ease-in-out infinite;
   filter: saturate(0.7);
+}
+.character[data-state="weary"] {
+  animation: bob 5.5s ease-in-out infinite;
+  filter: saturate(0.55) brightness(0.96);
+}
+.character[data-state="sleepy"] {
+  animation: bob 7s ease-in-out infinite;
+  filter: saturate(0.45) brightness(0.92);
+  transform: rotate(-3deg);
 }
 .character[data-state="sleep"] {
   filter: saturate(0.5) brightness(0.95);
@@ -414,6 +457,29 @@
   50% { transform: translateX(0) rotate(0); }
   75% { transform: translateX(2px) rotate(2deg); }
 }
+@keyframes wave {
+  0%, 100% { transform: rotate(-2deg); }
+  50% { transform: rotate(6deg); }
+}
+@keyframes lying {
+  0% { transform: rotate(0deg) translateY(0); }
+  20% { transform: rotate(70deg) translateY(8px); }
+  40% { transform: rotate(75deg) translateY(8px) translateX(-6px); }
+  60% { transform: rotate(80deg) translateY(8px) translateX(6px); }
+  80% { transform: rotate(75deg) translateY(8px); }
+  100% { transform: rotate(0deg) translateY(0); }
+}
+@keyframes front-roll {
+  0% { transform: rotateX(0deg) translateY(0); }
+  25% { transform: rotateX(-90deg) translateY(-6px); }
+  50% { transform: rotateX(-180deg) translateY(0); }
+  75% { transform: rotateX(-270deg) translateY(-3px); }
+  100% { transform: rotateX(-360deg) translateY(0); }
+}
+@keyframes exercise {
+  0%, 100% { transform: translateY(0) scaleY(1); }
+  50% { transform: translateY(-4px) scaleY(1.04); }
+}
 
 .character .bamboo {
   position: absolute;
@@ -433,6 +499,20 @@
   bottom: 18%;
   animation: bamboo-in 0.3s ease-out, bamboo-scratch 0.28s ease-in-out infinite alternate;
 }
+.character .bamboo-eat-fruit {
+  width: 32%;
+  height: 32%;
+  right: -8%;
+  bottom: 30%;
+  animation: bamboo-in 0.3s ease-out, fruit-bite 0.55s ease-in-out infinite alternate;
+}
+.character .bamboo-exercise {
+  width: 42%;
+  height: 28%;
+  right: -16%;
+  top: 40%;
+  animation: bamboo-in 0.3s ease-out, dumbbell-pump 0.4s ease-in-out infinite alternate;
+}
 @keyframes bamboo-in {
   from { opacity: 0; transform: translateX(20px) rotate(-30deg); }
   to { opacity: 1; transform: translateX(0) rotate(-12deg); }
@@ -444,6 +524,14 @@
 @keyframes bamboo-scratch {
   from { transform: rotate(60deg) translateX(-1px); }
   to { transform: rotate(80deg) translateX(2px) translateY(-2px); }
+}
+@keyframes fruit-bite {
+  from { transform: scale(1) translateX(0); }
+  to { transform: scale(0.95) translateX(-2px); }
+}
+@keyframes dumbbell-pump {
+  from { transform: translateY(0); }
+  to { transform: translateY(-6px); }
 }
 
 /* Action emoji overlays */
@@ -480,6 +568,22 @@
   color: #7a86ff;
   font-weight: 700;
   animation: zzz-rise 1.9s ease-in-out 2;
+}
+.wave-emoji {
+  top: -8%;
+  left: -2%;
+  font-size: 22px;
+  animation: wave-pop 0.5s ease-out 4;
+}
+.exercise-emoji {
+  top: 4%;
+  left: -8%;
+  font-size: 16px;
+  animation: float-fade 0.8s ease-in-out 3;
+}
+@keyframes wave-pop {
+  0%, 100% { transform: rotate(-15deg) scale(1); opacity: 0.85; }
+  50% { transform: rotate(20deg) scale(1.15); opacity: 1; }
 }
 @keyframes float-fade {
   0% { opacity: 0; transform: translateY(0) scale(0.6); }

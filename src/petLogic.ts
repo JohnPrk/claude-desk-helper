@@ -40,15 +40,19 @@ export function derive(
   const fiveHourRemaining = 1 - fiveHourUsed;
   const weeklyRemaining = 1 - weeklyUsed;
 
-  // Pet state, battery-style:
-  //   - weekly empty   → dead
-  //   - 5h empty       → sleep
-  //   - either ≤ 30% remaining → tired
-  //   - else            → idle
-  let petState: PetState = "idle";
+  // Pet state, battery-style 5-tier breakdown of the lowest remaining %:
+  //   ≥ 80% → idle, 60-80% → cheerful, 40-60% → tired,
+  //   20-40% → weary, 0-20% → sleepy.
+  // Hard 0% on either window short-circuits to sleep / dead.
+  let petState: PetState;
+  const lowest = Math.min(fiveHourRemaining, weeklyRemaining);
   if (weeklyRemaining <= 0) petState = "dead";
   else if (fiveHourRemaining <= 0) petState = "sleep";
-  else if (weeklyRemaining <= 0.3 || fiveHourRemaining <= 0.3) petState = "tired";
+  else if (lowest <= 0.2) petState = "sleepy";
+  else if (lowest <= 0.4) petState = "weary";
+  else if (lowest <= 0.6) petState = "tired";
+  else if (lowest <= 0.8) petState = "cheerful";
+  else petState = "idle";
 
   let cacheRemainMs: number | null = null;
   let cacheNudge = false;

@@ -1,13 +1,15 @@
 import type { PetState } from "./types";
 import pandaIdle from "./skins/panda/idle.svg";
+import pandaCheerful from "./skins/panda/cheerful.svg";
 import pandaTired from "./skins/panda/tired.svg";
+import pandaWeary from "./skins/panda/weary.svg";
+import pandaSleepy from "./skins/panda/sleepy.svg";
 import pandaSleep from "./skins/panda/sleep.svg";
 import pandaDead from "./skins/panda/dead.svg";
-import pandaBamboo from "./skins/panda/bamboo.svg";
 
-export const ACCESSORIES = {
-  bamboo: pandaBamboo,
-};
+import pandaBamboo from "./skins/panda/bamboo.svg";
+import pandaApple from "./skins/panda/apple.svg";
+import pandaDumbbell from "./skins/panda/dumbbell.svg";
 
 export type Skin = {
   id: string;
@@ -21,12 +23,21 @@ export const SKINS: Skin[] = [
     name: "Panda",
     frames: {
       idle: pandaIdle,
+      cheerful: pandaCheerful,
       tired: pandaTired,
+      weary: pandaWeary,
+      sleepy: pandaSleepy,
       sleep: pandaSleep,
       dead: pandaDead,
     },
   },
 ];
+
+export const ACCESSORIES = {
+  bamboo: pandaBamboo,
+  apple: pandaApple,
+  dumbbell: pandaDumbbell,
+};
 
 export const DEFAULT_SKIN_ID = "panda";
 

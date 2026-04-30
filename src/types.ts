@@ -37,4 +37,20 @@ export const PLAN_PRESETS: Record<Exclude<PlanId, "custom">, PlanLimits> = {
   max20x: { fiveHour: 100_000_000, weekly: 700_000_000 },
 };
 
-export type PetState = "idle" | "tired" | "sleep" | "dead";
+/// Energy tiers (battery-style: each tier is the LOWEST 'remaining %'
+/// across the 5h and weekly windows):
+///   idle      ≥ 80% — full energy, all actions available
+///   cheerful  60-80% — slightly less peppy
+///   tired     40-60% — middle ground
+///   weary     20-40% — slow, sluggish
+///   sleepy    0-20%  — about to drop
+///   sleep     5h limit hit (0%)        — knocked out
+///   dead      weekly limit hit (0%)    — collapsed
+export type PetState =
+  | "idle"
+  | "cheerful"
+  | "tired"
+  | "weary"
+  | "sleepy"
+  | "sleep"
+  | "dead";
