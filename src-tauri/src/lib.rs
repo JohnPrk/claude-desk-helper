@@ -72,6 +72,7 @@ mod macos_pinning {
         connection: c_int,
         space: c_int,
         add_windows_fn: SLSSpaceAddWindowsAndRemoveFromSpaces,
+        show_spaces_fn: SLSShowSpaces,
     }
 
     fn skylight() -> Option<&'static SkyLight> {
@@ -107,11 +108,13 @@ mod macos_pinning {
             }
 
             let add_windows_fn: SLSSpaceAddWindowsAndRemoveFromSpaces = *add_windows;
+            let show_spaces_fn: SLSShowSpaces = *show_spaces;
             Some(SkyLight {
                 _lib: lib,
                 connection,
                 space,
                 add_windows_fn,
+                show_spaces_fn,
             })
         }).as_ref()
     }
@@ -150,6 +153,39 @@ mod macos_pinning {
         }
     }
 
+    // NSWindowStyleMaskNonactivatingPanel = 1 << 7. Only honored on NSPanel
+    // (or subclass), so we class-swap NSWindow → NSPanel first.
+    const STYLE_NONACTIVATING_PANEL: u64 = 1 << 7;
+
+    extern "C" {
+        fn object_setClass(obj: *mut c_void, cls: *const c_void) -> *const c_void;
+    }
+
+    fn convert_to_panel_once(ns_window: *mut AnyObject) {
+        use objc2::class;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        static DONE: AtomicBool = AtomicBool::new(false);
+        if DONE.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        unsafe {
+            // Class-swap NSWindow → NSPanel. NSPanel inherits from NSWindow,
+            // so vtable is compatible. After this we can set the
+            // NonactivatingPanel style mask, which lets clicks reach the
+            // window without first activating the app — fixes the
+            // "first-click-just-focuses, second-click-drags" UX.
+            let panel_cls = class!(NSPanel);
+            let _ = object_setClass(
+                ns_window as *mut c_void,
+                panel_cls as *const _ as *const c_void,
+            );
+            let style: u64 = msg_send![ns_window, styleMask];
+            let new_style = style | STYLE_NONACTIVATING_PANEL;
+            let _: () = msg_send![ns_window, setStyleMask: new_style];
+            let _: () = msg_send![ns_window, setBecomesKeyOnlyIfNeeded: true];
+        }
+    }
+
     pub fn apply(window: &WebviewWindow) {
         let Ok(ptr) = window.ns_window() else { return };
         let ns_window = ptr as *mut AnyObject;
@@ -157,12 +193,12 @@ mod macos_pinning {
             return;
         }
 
+        // 1) NSPanel conversion (idempotent, runs once).
+        convert_to_panel_once(ns_window);
+
         unsafe {
-            // Clear bits that pull the window into Spaces management, then
-            // explicitly set the bits we want. This is the pattern clawd
-            // uses (mac-window.js:154) — relying on plain set-mask alone
-            // leaves stale Managed/MoveToActiveSpace bits and the OS
-            // continues to slide the window across Spaces.
+            // 2) Collection behavior — explicit clear + set so stale bits
+            //    don't leave the window participating in Spaces management.
             let current: u64 = msg_send![ns_window, collectionBehavior];
             let clear_mask = CB_MOVE_TO_ACTIVE_SPACE
                 | CB_MANAGED
@@ -190,10 +226,16 @@ mod macos_pinning {
             let _: () = msg_send![ns_window, setAnimationBehavior: ANIM_NONE];
         }
 
-        // Final and most important step: SkyLight private-API delegation.
-        // Without this, the OS still applies Space-switch transforms to our
-        // window even with stationary set. clawd discovered the same.
+        // 3) SkyLight: re-add the window to our private system Space and
+        //    re-issue SLSShowSpaces. The re-show fixes the case where a
+        //    different app's overlay (image viewer, fullscreen, etc.)
+        //    occludes our private Space.
         delegate_window_to_stationary_space(ns_window);
+        if let Some(sl) = skylight() {
+            if let Some(arr) = ns_number_array(sl.space) {
+                unsafe { let _ = (sl.show_spaces_fn)(sl.connection, arr); }
+            }
+        }
     }
 }
 

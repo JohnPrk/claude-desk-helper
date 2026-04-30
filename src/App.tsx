@@ -409,9 +409,7 @@ function UsageBubble({
           {pad(Math.round(weeklyRemaining * 100))}%
         </span>
         <span className="usage-reset">
-          {weeklyResetMs !== null
-            ? `${formatResetCountdown(weeklyResetMs)} (추정)`
-            : "—"}
+          {weeklyResetMs !== null ? formatResetCountdown(weeklyResetMs) : "—"}
         </span>
       </div>
     </div>
