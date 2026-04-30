@@ -585,6 +585,13 @@ function Settings({
   const [showCalibrate, setShowCalibrate] = useState(false);
   const apiActive = !!snap?.api && Date.now() - Date.parse(snap.api.fetched_at) < 2 * 60 * 1000;
 
+  // Make sure the panel is key + the app is active so text inputs receive
+  // keyboard / paste events. Without this, the NSPanel can stay non-key
+  // and WebKit silently drops keystrokes into our cookie/org id fields.
+  useEffect(() => {
+    invoke("focus_for_input").catch(() => {});
+  }, []);
+
   useEffect(() => {
     if (plan !== "custom") {
       setFive(PLAN_PRESETS[plan].fiveHour);

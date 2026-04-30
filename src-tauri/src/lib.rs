@@ -157,8 +157,11 @@ mod macos_pinning {
         }
     }
 
-    // NSWindowStyleMaskNonactivatingPanel = 1 << 7. Only honored on NSPanel
-    // (or subclass), so we class-swap NSWindow → NSPanel first.
+    // NSWindowStyleMaskNonactivatingPanel = 1 << 7 — kept here as a
+    // reference. Currently NOT applied (see convert_to_panel_once below)
+    // because it blocks WebKit text input by preventing the panel from
+    // becoming key for the embedded webview.
+    #[allow(dead_code)]
     const STYLE_NONACTIVATING_PANEL: u64 = 1 << 7;
 
     extern "C" {
@@ -174,19 +177,24 @@ mod macos_pinning {
         }
         unsafe {
             // Class-swap NSWindow → NSPanel. NSPanel inherits from NSWindow,
-            // so vtable is compatible. After this we can set the
-            // NonactivatingPanel style mask, which lets clicks reach the
-            // window without first activating the app — fixes the
-            // "first-click-just-focuses, second-click-drags" UX.
+            // so the vtable stays compatible.
+            //
+            // We deliberately DO NOT add NSWindowStyleMaskNonactivatingPanel
+            // here. Adding it gives nicer single-click drag UX, but blocks
+            // WebKit text input because the panel never becomes 'key' for
+            // input fields. With it dropped, Settings inputs (org id,
+            // session cookie) work normally; the trade-off is that the very
+            // first click on the pet may activate the app rather than start
+            // a drag — second click drags. focus_for_input below mitigates
+            // this for the Settings flow specifically.
             let panel_cls = class!(NSPanel);
             let _ = object_setClass(
                 ns_window as *mut c_void,
                 panel_cls as *const _ as *const c_void,
             );
-            let style: u64 = msg_send![ns_window, styleMask];
-            let new_style = style | STYLE_NONACTIVATING_PANEL;
-            let _: () = msg_send![ns_window, setStyleMask: new_style];
-            let _: () = msg_send![ns_window, setBecomesKeyOnlyIfNeeded: true];
+            // setBecomesKeyOnlyIfNeeded:false so any click that needs the
+            // window for input promotes us to key window immediately.
+            let _: () = msg_send![ns_window, setBecomesKeyOnlyIfNeeded: false];
         }
     }
 
@@ -321,6 +329,41 @@ fn set_tray_title(app: AppHandle, title: String) -> Result<(), String> {
     Ok(())
 }
 
+/// Force the main window into key+active state so WebKit text inputs (like
+/// the org id / cookie fields in Settings) actually receive paste and
+/// keystrokes. Called from JS whenever Settings opens.
+#[tauri::command]
+fn focus_for_input(app: AppHandle) -> Result<(), String> {
+    let Some(window) = app.get_webview_window("main") else {
+        return Ok(());
+    };
+    let _ = window.show();
+    let _ = window.set_focus();
+
+    #[cfg(target_os = "macos")]
+    {
+        use objc2::class;
+        use objc2::msg_send;
+        use objc2::runtime::AnyObject;
+        unsafe {
+            let nsapp_cls = class!(NSApplication);
+            let nsapp: *mut AnyObject = msg_send![nsapp_cls, sharedApplication];
+            // 'true' here is fine for our accessory app — there's no Dock
+            // icon to flash and we want keyboard input to flow.
+            let _: () = msg_send![nsapp, activateIgnoringOtherApps: true];
+
+            if let Ok(ptr) = window.ns_window() {
+                let ns_window = ptr as *mut AnyObject;
+                if !ns_window.is_null() {
+                    let nil: *const AnyObject = std::ptr::null();
+                    let _: () = msg_send![ns_window, makeKeyAndOrderFront: nil];
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 #[tauri::command]
 fn toggle_main_window(app: AppHandle) -> Result<(), String> {
     if let Some(window) = app.get_webview_window("main") {
@@ -430,11 +473,8 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
                 }
             }
             "settings" => {
-                if let Some(window) = app.get_webview_window("main") {
-                    let _ = window.show();
-                    let _ = window.set_focus();
-                    let _ = app.emit("show-settings", ());
-                }
+                let _ = focus_for_input(app.clone());
+                let _ = app.emit("show-settings", ());
             }
             "quit" => app.exit(0),
             _ => {}
@@ -549,6 +589,7 @@ pub fn run() {
             claude_projects_path,
             set_tray_title,
             toggle_main_window,
+            focus_for_input,
             set_api_config,
             test_api_config
         ])
