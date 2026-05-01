@@ -543,19 +543,19 @@ function Pet({
     };
   }, [d.petState]);
 
-  // Tray title — bamboo theme matching the brand. The bamboo glyph
-  // (🎋) on full, drying out as remaining drops, and a dead leaf when
-  // both windows are exhausted. Title-only — no icon — so there's no
-  // small white square next to the percentage on macOS.
+  // Tray title. The bamboo silhouette icon (set in lib.rs as a
+  // template PNG) carries the brand mark, so the default state shows
+  // just the percentage. Warning states get a leading state emoji to
+  // catch the eye even at the corner of the menu bar.
   useEffect(() => {
     const remaining = d.fiveHourRemaining;
-    const emoji =
-      d.petState === "disconnected" ? "🔌" :
-      d.petState === "dead" ? "🍂" :
-      remaining <= 0.15 ? "🥱" :
-      remaining <= 0.49 ? "🌾" :
-      "🎋";
-    const title = `${emoji} ${Math.round(remaining * 100)}%`;
+    const prefix =
+      d.petState === "disconnected" ? "🔌 " :
+      d.petState === "dead" ? "🍂 " :
+      remaining <= 0.15 ? "🥱 " :
+      remaining <= 0.49 ? "🌾 " :
+      "";
+    const title = `${prefix}${Math.round(remaining * 100)}%`;
     invoke("set_tray_title", { title }).catch(() => {});
   }, [d.fiveHourRemaining, d.petState]);
 
