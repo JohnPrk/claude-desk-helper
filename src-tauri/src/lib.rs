@@ -2,6 +2,7 @@ mod claude_api;
 mod usage;
 
 use claude_api::ApiUsage;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::OnceLock;
 
 use notify_debouncer_mini::new_debouncer;
@@ -10,8 +11,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 use tauri::menu::{Menu, MenuItem};
-use tauri::tray::{TrayIconBuilder, TrayIconEvent};
-use tauri::{AppHandle, Emitter, Manager, WebviewWindow};
+use tauri::tray::TrayIconBuilder;
+use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 
 #[cfg(target_os = "macos")]
 fn set_macos_accessory_app() {
@@ -38,8 +39,24 @@ mod macos_pinning {
     use objc2::msg_send;
     use objc2::runtime::AnyObject;
     use std::os::raw::{c_int, c_void};
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::OnceLock;
     use tauri::WebviewWindow;
+
+    // True while the Settings panel is open. While true, apply() must NOT
+    // re-set the window level back to ASSISTIVE_LEVEL — that would refreeze
+    // WebKit text input under the user mid-typing. The 1.5s pinning tick
+    // and Focused/Resized/Moved events both call apply(), so without this
+    // gate the input field appears blocked.
+    static SETTINGS_OPEN: AtomicBool = AtomicBool::new(false);
+
+    pub fn set_settings_open(open: bool) {
+        SETTINGS_OPEN.store(open, Ordering::SeqCst);
+    }
+
+    pub fn is_settings_open() -> bool {
+        SETTINGS_OPEN.load(Ordering::SeqCst)
+    }
 
     // NSWindowCollectionBehavior bits (NSWindow.h)
     const CB_CAN_JOIN_ALL_SPACES: u64 = 1 << 0;
@@ -158,9 +175,11 @@ mod macos_pinning {
     }
 
     // NSWindowStyleMaskNonactivatingPanel = 1 << 7 — kept here as a
-    // reference. Currently NOT applied (see convert_to_panel_once below)
-    // because it blocks WebKit text input by preventing the panel from
-    // becoming key for the embedded webview.
+    // reference. NOT applied: empirically, even with Settings'
+    // focus_for_input dance, Apple's WebKit text input stays frozen on
+    // a panel that was created with this mask. Trade-off accepted: the
+    // very first click on an inactive window activates the app instead
+    // of starting a drag, but settings text inputs always work.
     #[allow(dead_code)]
     const STYLE_NONACTIVATING_PANEL: u64 = 1 << 7;
 
@@ -178,15 +197,6 @@ mod macos_pinning {
         unsafe {
             // Class-swap NSWindow → NSPanel. NSPanel inherits from NSWindow,
             // so the vtable stays compatible.
-            //
-            // We deliberately DO NOT add NSWindowStyleMaskNonactivatingPanel
-            // here. Adding it gives nicer single-click drag UX, but blocks
-            // WebKit text input because the panel never becomes 'key' for
-            // input fields. With it dropped, Settings inputs (org id,
-            // session cookie) work normally; the trade-off is that the very
-            // first click on the pet may activate the app rather than start
-            // a drag — second click drags. focus_for_input below mitigates
-            // this for the Settings flow specifically.
             let panel_cls = class!(NSPanel);
             let _ = object_setClass(
                 ns_window as *mut c_void,
@@ -234,7 +244,12 @@ mod macos_pinning {
 
             let _: () = msg_send![ns_window, setCanHide: false];
             let _: () = msg_send![ns_window, setHidesOnDeactivate: false];
-            let _: () = msg_send![ns_window, setLevel: ASSISTIVE_LEVEL];
+            // Skip while Settings is open: the panel is intentionally at
+            // NSFloatingWindowLevel (3) so its text inputs accept keys.
+            // settings_focus() restores ASSISTIVE_LEVEL on close.
+            if !is_settings_open() {
+                let _: () = msg_send![ns_window, setLevel: ASSISTIVE_LEVEL];
+            }
             let _: () = msg_send![ns_window, setAnimationBehavior: ANIM_NONE];
         }
 
@@ -316,6 +331,86 @@ fn test_api_config(org_id: String, cookie: String) -> Result<ApiUsage, String> {
     claude_api::fetch_usage(&org_id, &cookie)
 }
 
+/// While Settings is open, drop the panel from
+/// CGAssistiveTechHighWindowLevel (1500) down to NSFloatingWindowLevel
+/// (3) so WebKit text inputs accept keystrokes. macOS silently freezes
+/// text input on windows above the screen-saver level. Restored on
+/// close.
+#[tauri::command]
+fn settings_focus(app: AppHandle, open: bool) -> Result<(), String> {
+    let Some(window) = app.get_webview_window("main") else {
+        return Ok(());
+    };
+    #[cfg(target_os = "macos")]
+    {
+        use objc2::class;
+        use objc2::msg_send;
+        use objc2::runtime::AnyObject;
+        const NS_FLOATING_WINDOW_LEVEL: i64 = 3;
+        const ASSISTIVE_LEVEL: i64 = 1500;
+
+        // Flip the flag BEFORE touching the level. The 1.5s pinning tick
+        // and focus events read this flag inside macos_pinning::apply();
+        // setting it first guarantees no interleaved tick re-elevates the
+        // window mid-typing.
+        macos_pinning::set_settings_open(open);
+
+        if let Ok(ptr) = window.ns_window() {
+            let ns_window = ptr as *mut AnyObject;
+            if !ns_window.is_null() {
+                unsafe {
+                    let level = if open {
+                        NS_FLOATING_WINDOW_LEVEL
+                    } else {
+                        ASSISTIVE_LEVEL
+                    };
+                    let _: () = msg_send![ns_window, setLevel: level];
+                    if open {
+                        let nsapp_cls = class!(NSApplication);
+                        let nsapp: *mut AnyObject =
+                            msg_send![nsapp_cls, sharedApplication];
+                        let _: () = msg_send![nsapp, activateIgnoringOtherApps: true];
+                        let nil: *const AnyObject = std::ptr::null();
+                        let _: () = msg_send![ns_window, makeKeyAndOrderFront: nil];
+                    }
+                }
+            }
+        }
+    }
+    let _ = open;
+    Ok(())
+}
+
+/// Manual refresh — invoked when the user double-clicks the panda.
+/// Re-reads the local jsonl snapshot synchronously and (if an API
+/// config is set) kicks off a background API fetch. A `usage-update`
+/// event is emitted on completion of either path so the UI re-renders.
+#[tauri::command]
+fn refresh_usage(app: AppHandle) -> Result<(), String> {
+    emit_snapshot(&app);
+    let cfg = api_state().config.lock().clone();
+    if let Some((org, cookie)) = cfg {
+        let app_clone = app.clone();
+        std::thread::spawn(move || {
+            match claude_api::fetch_usage(&org, &cookie) {
+                Ok(api) => {
+                    *api_state().latest.lock() = Some(api);
+                    *api_state().last_error.lock() = None;
+                    AUTH_POPUP_SHOWN.store(false, Ordering::SeqCst);
+                    emit_snapshot(&app_clone);
+                }
+                Err(e) => {
+                    let err_for_popup = e.clone();
+                    *api_state().last_error.lock() = Some(e);
+                    emit_snapshot(&app_clone);
+                    maybe_popup_settings_for_auth(&app_clone, &err_for_popup);
+                }
+            }
+        });
+    }
+    Ok(())
+}
+
 #[tauri::command]
 fn claude_projects_path() -> Option<PathBuf> {
     usage::claude_projects_dir()
@@ -364,6 +459,38 @@ fn focus_for_input(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+
+/// Open the standalone Settings window. The pet itself is a borderless
+/// NSPanel pinned at CGAssistiveTechHighWindowLevel — WebKit silently
+/// freezes text input on windows above the screen-saver level, so all
+/// keyed input (org id, cookie) lives in this separate, ordinary window
+/// instead. Reuses the existing window if it's already open.
+#[tauri::command]
+fn open_settings_window(app: AppHandle) -> Result<(), String> {
+    if let Some(existing) = app.get_webview_window("settings") {
+        let _ = existing.show();
+        let _ = existing.unminimize();
+        let _ = existing.set_focus();
+        return Ok(());
+    }
+
+    let url = WebviewUrl::App("index.html?view=settings".into());
+    let builder = WebviewWindowBuilder::new(&app, "settings", url)
+        .title("Claude Desk Pet — 설정")
+        .inner_size(440.0, 620.0)
+        .min_inner_size(380.0, 480.0)
+        .resizable(true)
+        .decorations(true)
+        .transparent(false)
+        .always_on_top(false)
+        .skip_taskbar(false)
+        .visible(true);
+
+    let window = builder.build().map_err(|e| e.to_string())?;
+    let _ = window.set_focus();
+    Ok(())
+}
+
 #[tauri::command]
 fn toggle_main_window(app: AppHandle) -> Result<(), String> {
     if let Some(window) = app.get_webview_window("main") {
@@ -382,6 +509,32 @@ fn emit_snapshot(app: &AppHandle) {
     let _ = app.emit("usage-update", &combined);
 }
 
+/// True if the error string from claude_api::fetch_usage looks like an
+/// expired-cookie / wrong-org scenario the user has to fix in Settings.
+/// 401 = unauthorized, 403 = blocked (often Cloudflare on a stale
+/// session), 404 = org id no longer resolves with this cookie.
+fn is_auth_failure(err: &str) -> bool {
+    err.contains("HTTP 401") || err.contains("HTTP 403") || err.contains("HTTP 404")
+}
+
+/// One-shot latch: pop Settings open the first time we hit an auth
+/// failure, then stay quiet until the next successful fetch resets it.
+/// Without the latch the poller would re-open Settings every 30s.
+static AUTH_POPUP_SHOWN: AtomicBool = AtomicBool::new(false);
+
+fn maybe_popup_settings_for_auth(app: &AppHandle, err: &str) {
+    if !is_auth_failure(err) {
+        return;
+    }
+    if AUTH_POPUP_SHOWN.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let app_clone = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        let _ = open_settings_window(app_clone);
+    });
+}
+
 fn start_api_poller(app: AppHandle) {
     std::thread::spawn(move || loop {
         let cfg = api_state().config.lock().clone();
@@ -390,11 +543,14 @@ fn start_api_poller(app: AppHandle) {
                 Ok(api) => {
                     *api_state().latest.lock() = Some(api);
                     *api_state().last_error.lock() = None;
+                    AUTH_POPUP_SHOWN.store(false, Ordering::SeqCst);
                     emit_snapshot(&app);
                 }
                 Err(e) => {
+                    let err_for_popup = e.clone();
                     *api_state().last_error.lock() = Some(e);
                     emit_snapshot(&app);
+                    maybe_popup_settings_for_auth(&app, &err_for_popup);
                 }
             }
         }
@@ -452,9 +608,13 @@ fn start_watcher(app: AppHandle) -> Arc<WatcherState> {
 
 fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     let show_item = MenuItem::with_id(app, "show", "펫 보이기/숨기기", true, None::<&str>)?;
+    let refresh_item = MenuItem::with_id(app, "refresh", "지금 새로고침", true, None::<&str>)?;
     let settings_item = MenuItem::with_id(app, "settings", "설정...", true, None::<&str>)?;
     let quit_item = MenuItem::with_id(app, "quit", "종료", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&show_item, &settings_item, &quit_item])?;
+    let menu = Menu::with_items(
+        app,
+        &[&show_item, &refresh_item, &settings_item, &quit_item],
+    )?;
 
     let _tray = TrayIconBuilder::with_id("main-tray")
         .icon(app.default_window_icon().unwrap().clone())
@@ -472,25 +632,19 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
                     }
                 }
             }
+            "refresh" => {
+                let _ = refresh_usage(app.clone());
+            }
             "settings" => {
-                let _ = focus_for_input(app.clone());
-                let _ = app.emit("show-settings", ());
+                let _ = open_settings_window(app.clone());
             }
             "quit" => app.exit(0),
             _ => {}
         })
-        .on_tray_icon_event(|tray, event| {
-            if let TrayIconEvent::Click { .. } = event {
-                if let Some(window) = tray.app_handle().get_webview_window("main") {
-                    if window.is_visible().unwrap_or(false) {
-                        let _ = window.hide();
-                    } else {
-                        let _ = window.show();
-                        let _ = window.set_focus();
-                    }
-                }
-            }
-        })
+        // No on_tray_icon_event: a left-click on the tray title now just
+        // opens the menu (the macOS default when a menu is set). The pet
+        // window stays visible until the user explicitly hides it via
+        // "펫 보이기/숨기기" in the menu.
         .build(app)?;
     Ok(())
 }
@@ -591,7 +745,10 @@ pub fn run() {
             toggle_main_window,
             focus_for_input,
             set_api_config,
-            test_api_config
+            test_api_config,
+            refresh_usage,
+            settings_focus,
+            open_settings_window
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

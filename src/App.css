@@ -101,14 +101,18 @@
   gap: 8px;
 }
 
-/* Stack of bubbles above the head */
+/* Stack of bubbles above the head. align-items:stretch so every bubble
+   shares the same width as the widest one (the usage bubble with the
+   reset countdown). The cache bubble loses its empty side padding and
+   matches usage exactly. */
 .bubble-stack {
   display: flex;
   flex-direction: column;
-  align-items: center;
+  align-items: stretch;
   gap: 6px;
   z-index: 2;
   min-height: 0;
+  width: fit-content;
 }
 .bubble {
   position: relative;
@@ -116,7 +120,7 @@
   border: 1px solid #ddd;
   border-radius: 12px;
   padding: 6px 10px;
-  min-width: 110px;
+  box-sizing: border-box;
   box-shadow: 0 2px 6px rgba(0,0,0,0.08);
   font-size: 11px;
   color: #222;
@@ -182,18 +186,18 @@
 
 /* Usage % bubble (between cache + panda) */
 .bubble.usage {
-  min-width: 168px;
   padding: 5px 10px;
 }
 .usage-row {
-  display: grid;
-  grid-template-columns: 28px 42px 1fr;
+  display: flex;
   align-items: baseline;
+  gap: 4px;
   font-feature-settings: "tnum";
 }
 .usage-label {
   color: #888;
   font-size: 10px;
+  width: 22px;
 }
 .usage-pct {
   font-weight: 600;
@@ -201,6 +205,7 @@
   text-align: right;
   font-variant-numeric: tabular-nums;
   white-space: pre;
+  margin-left: auto;
 }
 .usage-pct.warn { color: #d68a1f; }
 .usage-pct.danger { color: #d34141; }
@@ -210,7 +215,7 @@
   text-align: right;
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
-  padding-left: 8px;
+  padding-left: 4px;
 }
 
 /* Cache bubble stats row (hits / misses / combo) */
@@ -288,6 +293,9 @@
 .character[data-flash="miss"] {
   filter: grayscale(0.3);
 }
+.character[data-refreshing="true"] {
+  filter: drop-shadow(0 0 8px rgba(107, 76, 255, 0.6));
+}
 
 /* Character */
 .character {
@@ -300,104 +308,58 @@
 .character:active {
   cursor: grabbing;
 }
-.character img,
-.character svg.placeholder-panda {
+.character img {
   position: absolute;
   inset: 0;
   width: 100%;
   height: 100%;
   pointer-events: none;
-}
-.character img {
   z-index: 1;
 }
-.character svg.placeholder-panda {
-  z-index: 0;
-}
-.character[data-state="idle"] {
+/* State idle motion — bob + (sometimes) sway, slowing as energy drops. */
+.character[data-state="full"],
+.character[data-state="high"] {
   animation: bob 2.4s ease-in-out infinite, sway 5.3s ease-in-out infinite;
 }
-.character[data-state="idle"][data-action="bamboo"] {
-  animation: chew 0.55s ease-in-out infinite;
-}
-.character[data-state="idle"][data-action="roll"] {
-  animation: roll 1.5s cubic-bezier(.5,.05,.5,.95);
-}
-.character[data-state="idle"][data-action="jump"] {
-  animation: jump 1.2s cubic-bezier(.45,.05,.55,.95);
-}
-.character[data-state="idle"][data-action="spin"] {
-  animation: spin 1.8s ease-in-out;
-}
-.character[data-state="idle"][data-action="run"] {
-  animation: run 0.42s ease-in-out 6;
-}
-.character[data-state="idle"][data-action="shy"] {
-  animation: shy 0.7s ease-in-out 4;
-  filter: brightness(1.05);
-}
-.character[data-state="idle"][data-action="doze"] {
-  animation: doze 1.9s ease-in-out 2;
-  filter: saturate(0.85);
-}
-.character[data-state="idle"][data-action="scratch"],
-.character[data-state="cheerful"][data-action="scratch"],
-.character[data-state="tired"][data-action="scratch"],
-.character[data-state="weary"][data-action="scratch"],
-.character[data-state="sleepy"][data-action="scratch"] {
-  animation: scratch 0.32s ease-in-out 9;
-}
-
-/* New idle actions — usable from any non-asleep state */
-.character[data-action="wave"] {
-  animation: wave 0.5s ease-in-out 4;
-}
-.character[data-action="lying"] {
-  animation: lying 4s ease-in-out;
-}
-.character[data-action="front-roll"] {
-  animation: front-roll 1.4s cubic-bezier(.5,.05,.5,.95);
-}
-.character[data-action="eat-fruit"] {
-  animation: chew 0.6s ease-in-out infinite;
-}
-.character[data-action="exercise"] {
-  animation: exercise 0.4s ease-in-out 8;
-}
-
-/* Apply the energetic full-energy bob+sway across both idle and cheerful */
-.character[data-state="cheerful"] {
+.character[data-state="good"] {
   animation: bob 2.8s ease-in-out infinite, sway 6s ease-in-out infinite;
 }
-.character[data-state="cheerful"][data-action="bamboo"] { animation: chew 0.55s ease-in-out infinite; }
-.character[data-state="cheerful"][data-action="roll"] { animation: roll 1.5s cubic-bezier(.5,.05,.5,.95); }
-.character[data-state="cheerful"][data-action="jump"] { animation: jump 1.2s cubic-bezier(.45,.05,.55,.95); }
-.character[data-state="cheerful"][data-action="spin"] { animation: spin 1.8s ease-in-out; }
-.character[data-state="cheerful"][data-action="run"] { animation: run 0.42s ease-in-out 6; }
-.character[data-state="cheerful"][data-action="shy"] { animation: shy 0.7s ease-in-out 4; }
-.character[data-state="cheerful"][data-action="doze"] { animation: doze 1.9s ease-in-out 2; }
-
-.character[data-state="tired"] {
+.character[data-state="mid"] {
   animation: bob 4s ease-in-out infinite, sway 8s ease-in-out infinite;
-  filter: saturate(0.7);
+  filter: saturate(0.85);
 }
-.character[data-state="weary"] {
+.character[data-state="low"] {
   animation: bob 5.5s ease-in-out infinite;
-  filter: saturate(0.55) brightness(0.96);
+  filter: saturate(0.7) brightness(0.97);
+}
+.character[data-state="tired"] {
+  animation: bob 6.5s ease-in-out infinite;
+  filter: saturate(0.55) brightness(0.95);
 }
 .character[data-state="sleepy"] {
-  animation: bob 7s ease-in-out infinite;
-  filter: saturate(0.45) brightness(0.92);
-  transform: rotate(-3deg);
-}
-.character[data-state="sleep"] {
-  filter: saturate(0.5) brightness(0.95);
   animation: snore 3.8s ease-in-out infinite;
+  filter: saturate(0.45) brightness(0.92);
 }
 .character[data-state="dead"] {
   filter: grayscale(0.8) brightness(0.8);
-  transform: rotate(-12deg) translateY(8px);
 }
+
+/* Action overrides — keyed only on data-action so they apply across
+   every alive state. Once we drop motion GIFs into a skin's actions,
+   these CSS keyframes become the fallback. */
+.character[data-action="bamboo"]    { animation: chew 0.55s ease-in-out infinite; }
+.character[data-action="roll"]      { animation: roll 1.5s cubic-bezier(.5,.05,.5,.95); }
+.character[data-action="jump"]      { animation: jump 1.2s cubic-bezier(.45,.05,.55,.95); }
+.character[data-action="spin"]      { animation: spin 1.8s ease-in-out; }
+.character[data-action="run"]       { animation: run 0.42s ease-in-out 6; }
+.character[data-action="shy"]       { animation: shy 0.7s ease-in-out 4; filter: brightness(1.05); }
+.character[data-action="doze"]      { animation: doze 1.9s ease-in-out 2; filter: saturate(0.85); }
+.character[data-action="scratch"]   { animation: scratch 0.32s ease-in-out 9; }
+.character[data-action="wave"]      { animation: wave 0.5s ease-in-out 4; }
+.character[data-action="lying"]     { animation: lying 4s ease-in-out; }
+.character[data-action="front-roll"]{ animation: front-roll 1.4s cubic-bezier(.5,.05,.5,.95); }
+.character[data-action="eat-fruit"] { animation: chew 0.6s ease-in-out infinite; }
+.character[data-action="exercise"]  { animation: exercise 0.4s ease-in-out 8; }
 @keyframes bob {
   0%, 100% { transform: translateY(0); }
   50% { transform: translateY(-4px); }
@@ -608,6 +570,93 @@
 }
 
 
+/* Vertical bamboo-style gauge to the right of the panda. The fill is
+   absolutely positioned at the bottom and clipped via height %, so the
+   bamboo "grows" upward as remaining % rises and "shrinks" as it drops.
+   When src/skins/panda/bamboo_gauge.png is added, set it as
+   .bamboo-gauge-fill background-image and remove the green color. */
+.bamboo-gauge {
+  position: absolute;
+  right: 6px;
+  bottom: 8px;
+  width: 14px;
+  height: 110px;
+  border-radius: 7px;
+  background: rgba(0, 0, 0, 0.18);
+  overflow: hidden;
+  z-index: 4;
+  pointer-events: auto;
+}
+.bamboo-gauge-fill {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background:
+    /* future: replace with url("./skins/panda/bamboo_gauge.png") */
+    linear-gradient(180deg, #7fc66e 0%, #4f9c46 100%);
+  border-radius: 7px;
+  transition: height 0.5s ease-in-out;
+  /* segment lines for bamboo feel */
+  background-image:
+    repeating-linear-gradient(
+      0deg,
+      rgba(0, 0, 0, 0.18) 0,
+      rgba(0, 0, 0, 0.18) 2px,
+      transparent 2px,
+      transparent 22px
+    ),
+    linear-gradient(180deg, #7fc66e 0%, #4f9c46 100%);
+}
+
+/* Standalone settings window — wraps the Settings panel inside its own
+   ordinary OS window (created by open_settings_window in Rust). Replaces
+   the dim overlay on top of the pet, which had to fight panel-level text
+   input freezes.
+
+   Backdrop: a darker-than-the-bubble-fill purple blended with a neutral
+   gray. Sits between the brand purple (#6b4cff) and a slate gray so the
+   window feels related to the app but quiet enough to not fight the
+   inner content card. */
+.settings-window {
+  position: fixed;
+  inset: 0;
+  background:
+    radial-gradient(ellipse at top left, rgba(74, 60, 130, 0.55), transparent 60%),
+    radial-gradient(ellipse at bottom right, rgba(60, 60, 75, 0.55), transparent 60%),
+    linear-gradient(160deg, #2f2940 0%, #25232c 100%);
+  display: flex;
+  flex-direction: column;
+  padding: 18px;
+  overflow: auto;
+  color: #ececf1;
+  user-select: text;
+  -webkit-user-select: text;
+}
+.settings-window .settings-overlay {
+  position: static;
+  background: none;
+  display: block;
+  border-radius: 0;
+}
+/* Inner card is locked to a light gray surface regardless of system
+   theme — the outer purple-gray backdrop already gives the window its
+   mood, and a soft gray card sits on top without the eye-jarring
+   pure-white contrast while still keeping form text readable. */
+.settings-window .settings {
+  width: auto;
+  max-height: none;
+  background: #ececef;
+  color: #222;
+  border: 1px solid #d6d3df;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
+}
+.settings-window .settings h2,
+.settings-window .settings label,
+.settings-window .skin-picker-label {
+  color: #2a2a32;
+}
+
 /* Settings modal */
 .settings-overlay {
   position: absolute;
@@ -650,6 +699,71 @@
   font-size: 12px;
   font: inherit;
 }
+
+/* Visual character picker — swaps the old <select> for a clickable
+   thumbnail grid. Each tile is a button with the skin's preview image
+   and name; the selected tile gets a purple ring matching the bubble. */
+.skin-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.skin-picker-label {
+  font-size: 11px;
+  color: #555;
+}
+.skin-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(72px, 1fr));
+  gap: 8px;
+}
+.skin-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 8px 6px;
+  background: #fff;
+  border: 2px solid #e3dffa;
+  border-radius: 10px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 10px;
+  color: #444;
+  transition: border-color 0.15s ease, transform 0.15s ease;
+}
+.skin-tile:hover {
+  border-color: #b8a4ff;
+  transform: translateY(-1px);
+}
+.skin-tile.selected {
+  border-color: #6b4cff;
+  box-shadow: 0 0 0 2px rgba(107, 76, 255, 0.18);
+}
+.skin-tile img {
+  width: 56px;
+  height: 56px;
+  object-fit: contain;
+  pointer-events: none;
+}
+.skin-tile span {
+  font-size: 10px;
+  color: #444;
+}
+@media (prefers-color-scheme: dark) {
+  .skin-picker-label { color: #aaa; }
+  .skin-tile {
+    background: #2a2a32;
+    border-color: #3a3a44;
+    color: #ddd;
+  }
+  .skin-tile.selected {
+    border-color: #9b85ff;
+    box-shadow: 0 0 0 2px rgba(155, 133, 255, 0.25);
+  }
+  .skin-tile span { color: #ddd; }
+}
 .settings-actions {
   display: flex;
   gap: 6px;
@@ -659,11 +773,17 @@
 .settings-actions button {
   padding: 6px 12px;
   border-radius: 6px;
-  border: 1px solid #ccc;
-  background: #f5f5f5;
+  border: 1px solid #b8b4c4;
+  background: #ffffff;
+  color: #2a2a32;
   cursor: pointer;
   font: inherit;
   font-size: 12px;
+}
+.settings-actions button:hover {
+  background: #f3eef9;
+  border-color: #6b4cff;
+  color: #4a36c2;
 }
 .settings-actions .primary {
   background: #6b4cff;
@@ -750,8 +870,21 @@
 .api-section {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 6px;
+  /* Breathing room between the skin picker above and the API toggle.
+     The picker grid runs flush to the bottom of its container, so without
+     this margin the "API 연동" link sits visually glued to the last skin
+     tile. */
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid #d6d3df;
 }
+.api-section-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.api-section-head .link { flex: 0 0 auto; }
 .api-note {
   margin: 0;
   font-size: 10px;
@@ -773,7 +906,9 @@
   margin: 0;
   font-size: 10px;
   color: #555;
-  line-height: 1.5;
+  line-height: 1.55;
+  word-break: keep-all;
+  overflow-wrap: anywhere;
 }
 .api-help code {
   background: #ece9f8;
@@ -788,6 +923,122 @@
   font-size: 10px;
   color: #555;
   line-height: 1.55;
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
+.api-note {
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
+
+/* "🔔 어떻게 연결되나요?" help chip — replaces the older 💬 icon-only
+   button. A bell + a short prompt invites the user to expand the help
+   popup, which is otherwise the only place the cookie-extraction flow
+   is documented. Lives inline with the API 연동 toggle. */
+.help-bell-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  padding: 3px 8px;
+  background: #ece9f8;
+  border: 1px solid #d8d4ec;
+  border-radius: 999px;
+  font: inherit;
+  font-size: 10.5px;
+  cursor: pointer;
+  color: #4a36c2;
+  line-height: 1;
+}
+.help-bell-btn:hover {
+  background: #d8d4ec;
+  border-color: #b8a4ff;
+}
+.help-bell-btn .bell-icon {
+  font-size: 12px;
+}
+.help-bell-btn .bell-text {
+  font-size: 10.5px;
+}
+.api-help-popup {
+  margin-top: 4px;
+  padding: 10px 12px;
+  background: #ece9f8;
+  border: 1px solid #d8d4ec;
+  border-radius: 8px;
+  font-size: 10.5px;
+  color: #2a2240;
+  line-height: 1.55;
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
+.api-help-popup p { margin: 0 0 6px; }
+.api-help-popup p:last-child { margin-bottom: 0; }
+/* "로컬에서만 동작" + "이 설정 창이 자동으로 다시 열립니다" — emphasized
+   in warm orange to match the 🍪/🐼 emoji palette in the cookie-flow
+   diagram above, instead of competing with the surrounding purple. */
+.api-help-popup strong {
+  color: #d97a1f;
+  font-weight: 700;
+}
+
+/* Cookie-extraction flow diagram — shown at the top of the help popup
+   to give the long privacy paragraph a quick visual summary:
+   claude.ai → 5개의 쿠키 → 이 앱. Pure CSS + emoji, no asset deps. */
+.cookie-flow {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin: 0 0 10px;
+  padding: 10px 8px;
+  background: linear-gradient(135deg, #fff4e0 0%, #ffe9c7 100%);
+  border: 1px solid #f5d8a0;
+  border-radius: 8px;
+}
+.cookie-flow-step {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+.cookie-flow-icon {
+  font-size: 22px;
+  line-height: 1;
+}
+.cookie-flow-label {
+  font-size: 10px;
+  color: #7a5a1f;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.cookie-flow-arrow {
+  font-size: 14px;
+  color: #d97a1f;
+  font-weight: 700;
+  flex: 0 0 auto;
+}
+@media (prefers-color-scheme: dark) {
+  .help-bell-btn {
+    background: #2a2638;
+    border-color: #3a3a52;
+    color: #b8a4ff;
+  }
+  .help-bell-btn:hover { background: #3a3a52; }
+  .api-help-popup {
+    background: #2a2638;
+    border-color: #3a3a52;
+    color: #d6cffa;
+  }
+  .api-help-popup strong { color: #ffb56b; }
+  .cookie-flow {
+    background: linear-gradient(135deg, #3a2a1a 0%, #4a3520 100%);
+    border-color: #5a4525;
+  }
+  .cookie-flow-label { color: #f5d8a0; }
+  .cookie-flow-arrow { color: #ffb56b; }
 }
 .api-help-list code {
   background: #ece9f8;

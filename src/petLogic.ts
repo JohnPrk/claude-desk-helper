@@ -28,7 +28,7 @@ export function derive(
       weeklyRemaining: 1,
       fiveHourUsed: 0,
       weeklyUsed: 0,
-      petState: "idle",
+      petState: "full",
       cacheRemainMs: null,
       cacheNudge: false,
       fiveHourResetMs: null,
@@ -50,19 +50,19 @@ export function derive(
   const fiveHourRemaining = 1 - fiveHourUsed;
   const weeklyRemaining = 1 - weeklyUsed;
 
-  // Pet state, battery-style 5-tier breakdown of the lowest remaining %:
-  //   ≥ 80% → idle, 60-80% → cheerful, 40-60% → tired,
-  //   20-40% → weary, 0-20% → sleepy.
-  // Hard 0% on either window short-circuits to sleep / dead.
+  // Pet state from the LOWEST remaining % across both windows. Tier
+  // boundaries match the per-state PNG ranges in src/skins/<skin>/.
+  // weekly = 0 short-circuits to dead (weekly0.png).
   let petState: PetState;
   const lowest = Math.min(fiveHourRemaining, weeklyRemaining);
   if (weeklyRemaining <= 0) petState = "dead";
-  else if (fiveHourRemaining <= 0) petState = "sleep";
-  else if (lowest <= 0.2) petState = "sleepy";
-  else if (lowest <= 0.4) petState = "weary";
-  else if (lowest <= 0.6) petState = "tired";
-  else if (lowest <= 0.8) petState = "cheerful";
-  else petState = "idle";
+  else if (lowest <= 0.15) petState = "sleepy";  // 0–15% (also 5h=0%)
+  else if (lowest <= 0.33) petState = "tired";   // 15–33%
+  else if (lowest <= 0.49) petState = "low";     // 33–49%
+  else if (lowest <= 0.63) petState = "mid";     // 49–63%
+  else if (lowest <= 0.77) petState = "good";    // 63–77%
+  else if (lowest <= 0.90) petState = "high";    // 77–90%
+  else petState = "full";                         // 90–100%
 
   let cacheRemainMs: number | null = null;
   let cacheNudge = false;

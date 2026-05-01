@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { emit, listen } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { ApiConfig, PlanConfig, PlanId, UsageSnapshot } from "./types";
 import { PLAN_PRESETS } from "./types";
 import {
@@ -9,7 +10,7 @@ import {
   saveApiConfig,
   savePlanConfig,
 } from "./store";
-import { ACCESSORIES, DEFAULT_SKIN_ID, SKINS, findSkin } from "./skins";
+import { ACCESSORIES, DEFAULT_SKIN_ID, SKINS, findSkin, type ActionName } from "./skins";
 import {
   CACHE_TTL_MS,
   derive,
@@ -21,8 +22,7 @@ import { maybeNotify, resetThreshold } from "./notifier";
 import "./App.css";
 
 // Action set + wait gap, conditioned on the panda's current energy tier.
-// Energetic actions (jump/run/spin/exercise/front-roll) only happen at idle
-// or cheerful; sluggish ones (lying/doze) only at weary or sleepy.
+// Energetic actions only happen at upper tiers; sluggish ones at lower.
 function allowedActionsFor(state: string) {
   const energetic = new Set(["roll", "jump", "spin", "run", "front-roll", "exercise", "wave"]);
   const calm = new Set(["bamboo", "eat-fruit", "scratch", "shy", "wave"]);
@@ -30,14 +30,16 @@ function allowedActionsFor(state: string) {
 
   let names: Set<string>;
   switch (state) {
-    case "idle":
-    case "cheerful":
+    case "full":
+    case "high":
+    case "good":
       names = new Set([...energetic, ...calm]);
       break;
-    case "tired":
+    case "mid":
       names = new Set([...calm, "spin", "wave"]);
       break;
-    case "weary":
+    case "low":
+    case "tired":
     case "sleepy":
       names = sluggish;
       break;
@@ -50,13 +52,15 @@ function allowedActionsFor(state: string) {
 // Wait between actions, by tier — peppier states act more often.
 function waitMsFor(state: string): [number, number] {
   switch (state) {
-    case "idle":
+    case "full":
+    case "high":
       return [4_500, 5_500];      // ~5-10s
-    case "cheerful":
+    case "good":
       return [6_000, 6_000];      // ~6-12s
-    case "tired":
+    case "mid":
       return [9_000, 7_000];      // ~9-16s
-    case "weary":
+    case "low":
+    case "tired":
       return [13_000, 9_000];     // ~13-22s
     case "sleepy":
       return [18_000, 12_000];    // ~18-30s
@@ -108,10 +112,23 @@ const REMAINING_THRESHOLDS: Array<[number, string]> = [
 
 type View = "loading" | "onboarding" | "pet";
 
+// Two windows share this bundle: the pinned panel ("main") and the
+// settings popup ("settings"). The popup is launched with ?view=settings
+// so we can branch the React tree at the top.
+function isSettingsWindow(): boolean {
+  return new URLSearchParams(window.location.search).get("view") === "settings";
+}
+
 export default function App() {
+  if (isSettingsWindow()) {
+    return <SettingsApp />;
+  }
+  return <PetApp />;
+}
+
+function PetApp() {
   const [view, setView] = useState<View>("loading");
   const [config, setConfig] = useState<PlanConfig | null>(null);
-  const [apiConfig, setApiConfig] = useState<ApiConfig | null>(null);
 
   useEffect(() => {
     Promise.all([loadPlanConfig(), loadApiConfig()]).then(([cfg, api]) => {
@@ -119,7 +136,6 @@ export default function App() {
         invoke("set_api_config", { orgId: api.orgId, cookie: api.cookie }).catch(
           () => {},
         );
-        setApiConfig(api);
       }
       if (cfg) {
         setConfig(cfg);
@@ -128,6 +144,21 @@ export default function App() {
         setView("onboarding");
       }
     });
+  }, []);
+
+  // The standalone settings window emits `config-changed` after every
+  // save. Reload the plan from the shared store so the pet picks up the
+  // new skin/limits without restarting. The api config is already pushed
+  // to the Rust side directly by the settings window via set_api_config,
+  // so we don't need to mirror it in pet React state.
+  useEffect(() => {
+    const un = listen("config-changed", async () => {
+      const cfg = await loadPlanConfig();
+      if (cfg) setConfig(cfg);
+    });
+    return () => {
+      un.then((fn) => fn());
+    };
   }, []);
 
   if (view === "loading") return null;
@@ -142,23 +173,68 @@ export default function App() {
       />
     );
   }
+  return <Pet config={config!} />;
+}
+
+// The settings popup is its own ordinary, decorated window. No panel
+// pinning, no level juggling — text inputs work normally. It loads the
+// shared config store, lets the user edit, and broadcasts
+// `config-changed` so the pet window can re-read.
+function SettingsApp() {
+  const [config, setConfig] = useState<PlanConfig | null>(null);
+  const [apiConfig, setApiConfig] = useState<ApiConfig | null>(null);
+  const [snap, setSnap] = useState<UsageSnapshot | null>(null);
+
+  useEffect(() => {
+    Promise.all([
+      loadPlanConfig(),
+      loadApiConfig(),
+      invoke<UsageSnapshot>("get_usage_snapshot").catch(() => null),
+    ]).then(([cfg, api, s]) => {
+      setConfig(cfg);
+      setApiConfig(api);
+      if (s) setSnap(s);
+    });
+    const un = listen<UsageSnapshot>("usage-update", (e) => setSnap(e.payload));
+    return () => {
+      un.then((fn) => fn());
+    };
+  }, []);
+
+  if (!config) return null;
+
+  const closeSelf = async () => {
+    try {
+      await getCurrentWindow().close();
+    } catch {
+      // best-effort
+    }
+  };
+
   return (
-    <Pet
-      config={config!}
-      apiConfig={apiConfig}
-      onConfigChange={async (cfg) => {
-        await savePlanConfig(cfg);
-        setConfig(cfg);
-      }}
-      onApiConfigChange={async (api) => {
-        await saveApiConfig(api);
-        await invoke("set_api_config", {
-          orgId: api?.orgId ?? null,
-          cookie: api?.cookie ?? null,
-        }).catch(() => {});
-        setApiConfig(api);
-      }}
-    />
+    <div className="settings-window">
+      <Settings
+        config={config}
+        apiConfig={apiConfig}
+        snap={snap}
+        onClose={closeSelf}
+        onSave={async (c) => {
+          await savePlanConfig(c);
+          setConfig(c);
+          await emit("config-changed");
+          await closeSelf();
+        }}
+        onApiSave={async (a) => {
+          await saveApiConfig(a);
+          await invoke("set_api_config", {
+            orgId: a?.orgId ?? null,
+            cookie: a?.cookie ?? null,
+          }).catch(() => {});
+          setApiConfig(a);
+          await emit("config-changed");
+        }}
+      />
+    </div>
   );
 }
 
@@ -241,28 +317,26 @@ function descOf(p: PlanId) {
 
 function Pet({
   config,
-  apiConfig,
-  onConfigChange,
-  onApiConfigChange,
 }: {
   config: PlanConfig;
-  apiConfig: ApiConfig | null;
-  onConfigChange: (cfg: PlanConfig) => void;
-  onApiConfigChange: (api: ApiConfig | null) => void;
 }) {
   const [snap, setSnap] = useState<UsageSnapshot | null>(null);
   const [now, setNow] = useState(Date.now());
-  const [showSettings, setShowSettings] = useState(false);
   const [idleAction, setIdleAction] = useState<IdleAction>("none");
   const [flash, setFlash] = useState<"hit" | "miss" | null>(null);
   const [seenCounts, setSeenCounts] = useState({ hits: -1, misses: -1 });
+  const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => {
     invoke<UsageSnapshot>("get_usage_snapshot").then(setSnap).catch(() => {});
     const unlistenP = listen<UsageSnapshot>("usage-update", (e) =>
       setSnap(e.payload),
     );
-    const unlistenSettings = listen("show-settings", () => setShowSettings(true));
+    // Fallback for any old code path that emits show-settings: route to
+    // the new standalone window instead of opening an in-panel overlay.
+    const unlistenSettings = listen("show-settings", () => {
+      invoke("open_settings_window").catch(() => {});
+    });
     const tick = setInterval(() => setNow(Date.now()), 500);
     return () => {
       clearInterval(tick);
@@ -297,7 +371,7 @@ function Pet({
   // Idle micro-actions: filtered by current energy tier so a sleepy panda
   // doesn't spontaneously start exercising. sleep/dead never trigger any.
   useEffect(() => {
-    if (d.petState === "sleep" || d.petState === "dead") {
+    if (d.petState === "dead") {
       setIdleAction("none");
       return;
     }
@@ -329,20 +403,19 @@ function Pet({
     };
   }, [d.petState]);
 
-  // Tray title — battery style: lowest remaining %
+  // Tray title — battery style, always based on the 5h window so the
+  // menubar % matches the "5h" row in the bubble. Weekly is reflected in
+  // the pet state (dead) but not in the headline number.
   useEffect(() => {
-    const lowest = Math.min(d.fiveHourRemaining, d.weeklyRemaining);
+    const remaining = d.fiveHourRemaining;
     const emoji =
       d.petState === "dead" ? "💀" :
-      d.petState === "sleep" ? "💤" :
-      d.petState === "sleepy" ? "😴" :
-      d.petState === "weary" ? "🪫" :
-      d.petState === "tired" ? "🪫" :
-      d.petState === "cheerful" ? "🔋" :
+      remaining <= 0.15 ? "😴" :
+      remaining <= 0.49 ? "🪫" :
       "🔋";
-    const title = `${emoji} ${Math.round(lowest * 100)}%`;
+    const title = `${emoji} ${Math.round(remaining * 100)}%`;
     invoke("set_tray_title", { title }).catch(() => {});
-  }, [d.fiveHourRemaining, d.weeklyRemaining, d.petState]);
+  }, [d.fiveHourRemaining, d.petState]);
 
   // Threshold notifications (battery-style: low remaining triggers alert)
   useEffect(() => {
@@ -379,12 +452,43 @@ function Pet({
 
   const skin = findSkin(config.skin);
 
+  // Prefer a motion gif for the current action if the skin provides one.
+  // The static frame always tracks the current pet state (energy tier) —
+  // idle actions overlay CSS animation only, never swap to a different
+  // tier's PNG, so the panda never visually jumps tier mid-action.
+  const characterSrc = (() => {
+    if (idleAction !== "none") {
+      const gif = skin.actions?.[idleAction as ActionName];
+      if (gif) return gif;
+    }
+    return skin.frames[d.petState];
+  })();
+
+  // Track image-load failure as React state instead of mutating inline
+  // styles in onError. The previous approach set opacity:0 on error and
+  // never restored it, so a single transient load failure (e.g. during
+  // re-render after a click on the tauri drag region) made the panda
+  // disappear permanently. Resetting on src change keeps it self-healing.
+  const [imgFailed, setImgFailed] = useState(false);
+  useEffect(() => {
+    setImgFailed(false);
+  }, [characterSrc]);
+
   const showCache =
     d.cacheRemainMs !== null && !(snap?.is_thinking ?? false);
 
+  // Drag uses Tauri's native data-tauri-drag-region — macOS handles
+  // click-vs-drag at the OS layer. Manual refresh is now exclusively a
+  // right-click on the panda (or the tray menu's "지금 새로고침").
+  const triggerRefresh = () => {
+    setRefreshing(true);
+    invoke("refresh_usage").catch(() => {});
+    window.setTimeout(() => setRefreshing(false), 700);
+  };
+
   return (
     <div className="pet-root">
-      <div className="bubble-stack">
+      <div className="bubble-stack" data-tauri-drag-region>
         {showCache && (
           <CacheBubble
             remainMs={d.cacheRemainMs!}
@@ -410,22 +514,24 @@ function Pet({
         data-state={d.petState}
         data-action={idleAction}
         data-flash={flash ?? ""}
+        data-refreshing={refreshing ? "true" : ""}
         data-tauri-drag-region
+        onContextMenu={(e) => {
+          // Right-click on the panda = manual refresh. preventDefault
+          // suppresses any browser/webview context menu so only the
+          // refresh ping is visible.
+          e.preventDefault();
+          triggerRefresh();
+        }}
       >
         <img
-          src={
-            idleAction === "doze"
-              ? skin.frames.sleep
-              : skin.frames[d.petState]
-          }
+          src={characterSrc}
           alt={d.petState}
           draggable={false}
-          data-tauri-drag-region
-          onError={(e) => {
-            (e.currentTarget as HTMLImageElement).style.opacity = "0";
-          }}
+          style={imgFailed ? { opacity: 0 } : undefined}
+          onError={() => setImgFailed(true)}
+          onLoad={() => setImgFailed(false)}
         />
-        <PlaceholderPanda state={d.petState} />
         {(idleAction === "bamboo" || idleAction === "scratch") && (
           <img
             className={`bamboo bamboo-${idleAction}`}
@@ -452,22 +558,6 @@ function Pet({
           </div>
         )}
       </div>
-
-      {showSettings && (
-        <Settings
-          config={config}
-          apiConfig={apiConfig}
-          snap={snap}
-          onClose={() => setShowSettings(false)}
-          onSave={(c) => {
-            onConfigChange(c);
-            setShowSettings(false);
-          }}
-          onApiSave={(a) => {
-            onApiConfigChange(a);
-          }}
-        />
-      )}
     </div>
   );
 }
@@ -487,8 +577,8 @@ function CacheBubble({
 }) {
   const pct = Math.max(0, Math.min(1, remainMs / CACHE_TTL_MS));
   return (
-    <div className={`bubble cache ${nudge ? "nudge" : ""}`}>
-      <div className="bubble-row">
+    <div className={`bubble cache ${nudge ? "nudge" : ""}`} data-tauri-drag-region>
+      <div className="bubble-row" data-tauri-drag-region>
         <span className="bubble-time">{formatRemain(remainMs)}</span>
         <span className="bubble-label">캐시</span>
       </div>
@@ -509,11 +599,11 @@ function CacheBubble({
 
 function ThinkingBubble() {
   return (
-    <div className="bubble thinking">
-      <span className="dots">
+    <div className="bubble thinking" data-tauri-drag-region>
+      <span className="dots" data-tauri-drag-region>
         <span/><span/><span/>
       </span>
-      <span className="thinking-label">생각 중</span>
+      <span className="thinking-label" data-tauri-drag-region>생각 중</span>
     </div>
   );
 }
@@ -530,22 +620,28 @@ function UsageBubble({
   weeklyResetMs: number | null;
 }) {
   return (
-    <div className="bubble usage">
-      <div className="usage-row">
-        <span className="usage-label">5h</span>
-        <span className={`usage-pct ${toneOf(fiveRemaining)}`}>
+    <div className="bubble usage" data-tauri-drag-region>
+      <div className="usage-row" data-tauri-drag-region>
+        <span className="usage-label" data-tauri-drag-region>5h</span>
+        <span
+          className={`usage-pct ${toneOf(fiveRemaining)}`}
+          data-tauri-drag-region
+        >
           {pad(Math.round(fiveRemaining * 100))}%
         </span>
-        <span className="usage-reset">
+        <span className="usage-reset" data-tauri-drag-region>
           {fiveResetMs !== null ? formatResetCountdown(fiveResetMs) : "—"}
         </span>
       </div>
-      <div className="usage-row">
-        <span className="usage-label">주간</span>
-        <span className={`usage-pct ${toneOf(weeklyRemaining)}`}>
+      <div className="usage-row" data-tauri-drag-region>
+        <span className="usage-label" data-tauri-drag-region>주간</span>
+        <span
+          className={`usage-pct ${toneOf(weeklyRemaining)}`}
+          data-tauri-drag-region
+        >
           {pad(Math.round(weeklyRemaining * 100))}%
         </span>
-        <span className="usage-reset">
+        <span className="usage-reset" data-tauri-drag-region>
           {weeklyResetMs !== null ? formatResetCountdown(weeklyResetMs) : "—"}
         </span>
       </div>
@@ -578,68 +674,30 @@ function Settings({
   onSave: (c: PlanConfig) => void;
   onApiSave: (a: ApiConfig | null) => void;
 }) {
-  const [plan, setPlan] = useState<PlanId>(config.plan);
-  const [five, setFive] = useState(config.limits.fiveHour);
-  const [week, setWeek] = useState(config.limits.weekly);
   const [skin, setSkin] = useState(config.skin);
-  const [showCalibrate, setShowCalibrate] = useState(false);
   const apiActive = !!snap?.api && Date.now() - Date.parse(snap.api.fetched_at) < 2 * 60 * 1000;
-
-  // Make sure the panel is key + the app is active so text inputs receive
-  // keyboard / paste events. Without this, the NSPanel can stay non-key
-  // and WebKit silently drops keystrokes into our cookie/org id fields.
-  useEffect(() => {
-    invoke("focus_for_input").catch(() => {});
-  }, []);
-
-  useEffect(() => {
-    if (plan !== "custom") {
-      setFive(PLAN_PRESETS[plan].fiveHour);
-      setWeek(PLAN_PRESETS[plan].weekly);
-    }
-  }, [plan]);
 
   return (
     <div className="settings-overlay" onClick={onClose}>
       <div className="settings" onClick={(e) => e.stopPropagation()}>
         <h2>설정</h2>
-        <label>
-          플랜
-          <select value={plan} onChange={(e) => setPlan(e.target.value as PlanId)}>
-            <option value="pro">Pro</option>
-            <option value="max5x">Max 5×</option>
-            <option value="max20x">Max 20×</option>
-            <option value="custom">Custom</option>
-          </select>
-        </label>
-        <label>
-          5h 한도
-          <input
-            type="number"
-            value={five}
-            disabled={plan !== "custom"}
-            onChange={(e) => setFive(Number(e.target.value))}
-          />
-        </label>
-        <label>
-          주간 한도
-          <input
-            type="number"
-            value={week}
-            disabled={plan !== "custom"}
-            onChange={(e) => setWeek(Number(e.target.value))}
-          />
-        </label>
-        <label>
-          캐릭터
-          <select value={skin} onChange={(e) => setSkin(e.target.value)}>
+        <div className="skin-picker">
+          <span className="skin-picker-label">캐릭터</span>
+          <div className="skin-grid">
             {SKINS.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.name}
-              </option>
+              <button
+                type="button"
+                key={s.id}
+                className={`skin-tile ${skin === s.id ? "selected" : ""}`}
+                onClick={() => setSkin(s.id)}
+                title={s.name}
+              >
+                <img src={s.frames.good} alt={s.name} />
+                <span>{s.name}</span>
+              </button>
             ))}
-          </select>
-        </label>
+          </div>
+        </div>
 
         <ApiSection
           apiConfig={apiConfig}
@@ -648,39 +706,14 @@ function Settings({
           onSave={onApiSave}
         />
 
-        {!apiActive && (
-          <>
-            <button
-              className="link"
-              onClick={() => setShowCalibrate((v) => !v)}
-              type="button"
-            >
-              {showCalibrate ? "캘리브레이션 닫기" : "캘리브레이션 도우미"}
-            </button>
-
-            {showCalibrate && (
-              <Calibrator
-                snap={snap}
-                onApply={(fiveLimit, weekLimit) => {
-                  setPlan("custom");
-                  setFive(fiveLimit);
-                  setWeek(weekLimit);
-                }}
-              />
-            )}
-          </>
-        )}
-
-        <Diagnostics snap={snap} apiActive={apiActive} />
-
         <div className="settings-actions">
           <button onClick={onClose}>취소</button>
           <button
             className="primary"
             onClick={() =>
               onSave({
-                plan,
-                limits: { fiveHour: five, weekly: week },
+                plan: config.plan,
+                limits: config.limits,
                 skin,
               })
             }
@@ -689,132 +722,6 @@ function Settings({
           </button>
         </div>
       </div>
-    </div>
-  );
-}
-
-function Calibrator({
-  snap,
-  onApply,
-}: {
-  snap: UsageSnapshot | null;
-  onApply: (fiveLimit: number, weekLimit: number) => void;
-}) {
-  const [fivePct, setFivePct] = useState<string>("");
-  const [weekPct, setWeekPct] = useState<string>("");
-
-  const fiveTokens = snap?.five_hour_tokens ?? 0;
-  const weekTokens = snap?.weekly_tokens ?? 0;
-
-  const compute = () => {
-    const f = Number(fivePct);
-    const w = Number(weekPct);
-    if (!f || !w || f <= 0 || w <= 0 || f >= 100 || w >= 100) return;
-    const fiveLimit = Math.round(fiveTokens / (f / 100));
-    const weekLimit = Math.round(weekTokens / (w / 100));
-    onApply(fiveLimit, weekLimit);
-  };
-
-  return (
-    <div className="calibrator">
-      <p className="calibrator-help">
-        Claude UI에 표시된 사용 % 를 입력하면 한도를 역산합니다.
-      </p>
-      <div className="calibrator-row">
-        <span>현재 5h 카운트</span>
-        <code>{formatTokens(fiveTokens)}</code>
-      </div>
-      <div className="calibrator-row">
-        <span>현재 주간 카운트</span>
-        <code>{formatTokens(weekTokens)}</code>
-      </div>
-      <label>
-        Claude UI의 5h 사용 %
-        <input
-          type="number"
-          placeholder="예: 53"
-          value={fivePct}
-          onChange={(e) => setFivePct(e.target.value)}
-        />
-      </label>
-      <label>
-        Claude UI의 주간 사용 %
-        <input
-          type="number"
-          placeholder="예: 39"
-          value={weekPct}
-          onChange={(e) => setWeekPct(e.target.value)}
-        />
-      </label>
-      {(Number(fivePct) > 0 || Number(weekPct) > 0) && (
-        <div className="calibrator-preview">
-          저장 후 펫 표시:
-          {Number(fivePct) > 0 && (
-            <code>5h {100 - Number(fivePct)}% 남음</code>
-          )}
-          {Number(weekPct) > 0 && (
-            <code>주간 {100 - Number(weekPct)}% 남음</code>
-          )}
-          <span className="calibrator-note">
-            (배터리 스타일이라 100 − 사용% = 남은%로 표시됩니다)
-          </span>
-        </div>
-      )}
-      <button type="button" className="primary slim" onClick={compute}>
-        한도 계산해서 Custom에 적용
-      </button>
-    </div>
-  );
-}
-
-function Diagnostics({
-  snap,
-  apiActive,
-}: {
-  snap: UsageSnapshot | null;
-  apiActive: boolean;
-}) {
-  if (!snap) {
-    return (
-      <div className="diagnostics">
-        <strong>진단</strong>
-        <span>jsonl 데이터 없음</span>
-      </div>
-    );
-  }
-  const lastReq = snap.last_request_at
-    ? new Date(snap.last_request_at).toLocaleTimeString()
-    : "—";
-  const lastUser = snap.last_user_prompt_at
-    ? new Date(snap.last_user_prompt_at).toLocaleTimeString()
-    : "—";
-  const fiveStart = snap.five_hour_window_start
-    ? new Date(snap.five_hour_window_start).toLocaleString()
-    : "(없음 — 5h 윈도우 비활성)";
-  return (
-    <div className="diagnostics">
-      <strong>진단</strong>
-      <div className="diag-row">
-        <span>데이터 소스</span>
-        <code>{apiActive ? "API (실시간)" : "jsonl (추정)"}</code>
-      </div>
-      {apiActive && snap.api && (
-        <>
-          <div className="diag-row"><span>API 5h 사용</span><code>{snap.api.five_hour_pct.toFixed(1)}%</code></div>
-          <div className="diag-row"><span>API 주간 사용</span><code>{snap.api.weekly_pct.toFixed(1)}%</code></div>
-          <div className="diag-row">
-            <span>API 갱신</span>
-            <code>{new Date(snap.api.fetched_at).toLocaleTimeString()}</code>
-          </div>
-        </>
-      )}
-      <div className="diag-row"><span>5h 카운트 (jsonl)</span><code>{formatTokens(snap.five_hour_tokens)}</code></div>
-      <div className="diag-row"><span>주간 카운트 (jsonl)</span><code>{formatTokens(snap.weekly_tokens)}</code></div>
-      <div className="diag-row"><span>5h 윈도우 시작</span><code>{fiveStart}</code></div>
-      <div className="diag-row"><span>마지막 응답</span><code>{lastReq}</code></div>
-      <div className="diag-row"><span>마지막 사용자 프롬프트</span><code>{lastUser}</code></div>
-      <div className="diag-row"><span>생각 중</span><code>{snap.is_thinking ? "yes" : "no"}</code></div>
-      <div className="diag-row"><span>캐시 hit/miss</span><code>{snap.cache_hits_5min} / {snap.cache_misses_5min}</code></div>
     </div>
   );
 }
@@ -834,6 +741,7 @@ function ApiSection({
   const [orgId, setOrgId] = useState(apiConfig?.orgId ?? "");
   const [cookie, setCookie] = useState(apiConfig?.cookie ?? "");
   const [testStatus, setTestStatus] = useState<string>("");
+  const [showHelp, setShowHelp] = useState(false);
 
   const test = async () => {
     setTestStatus("테스트 중...");
@@ -852,16 +760,62 @@ function ApiSection({
 
   return (
     <div className="api-section">
-      <button
-        className="link"
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-      >
-        {open ? "API 연동 닫기" : `API 연동 ${apiActive ? "(활성)" : "(비활성)"}`}
-      </button>
+      <div className="api-section-head">
+        <button
+          className="link"
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+        >
+          {open ? "API 연동 닫기" : "API 연동"}
+        </button>
+        <button
+          type="button"
+          className="help-bell-btn"
+          onClick={() => setShowHelp((v) => !v)}
+          aria-label="API 연동 설명 보기"
+          title="어떻게 연결되는지 보기"
+        >
+          <span className="bell-icon" aria-hidden="true">🔔</span>
+          <span className="bell-text">어떻게 연결되나요?</span>
+        </button>
+      </div>
+      {showHelp && (
+        <div className="api-help-popup" role="note">
+          <div className="cookie-flow" aria-hidden="true">
+            <div className="cookie-flow-step">
+              <span className="cookie-flow-icon">🌐</span>
+              <span className="cookie-flow-label">claude.ai</span>
+            </div>
+            <span className="cookie-flow-arrow">→</span>
+            <div className="cookie-flow-step">
+              <span className="cookie-flow-icon">🍪</span>
+              <span className="cookie-flow-label">쿠키 5개</span>
+            </div>
+            <span className="cookie-flow-arrow">→</span>
+            <div className="cookie-flow-step">
+              <span className="cookie-flow-icon">🐼</span>
+              <span className="cookie-flow-label">이 앱</span>
+            </div>
+          </div>
+          <p>
+            <strong>로컬에서만 동작</strong>해요. 입력한 Org ID와 쿠키는 이 컴퓨터에만 저장되고,
+            앱이 직접 <code>claude.ai/api/.../usage</code>를 30초마다 조회해 사용량을 가져옵니다.
+            외부 서버로 전송하지 않아요.
+          </p>
+          <p>
+            쿠키가 만료되거나 무효해지면 (HTTP 401·403·404) 다음 폴링에서 감지해
+            <strong> 이 설정 창이 자동으로 다시 열립니다.</strong> 그때 claude.ai에서 새 쿠키를 복사해 붙여넣으면 돼요.
+          </p>
+          <p>
+            쿠키는 claude.ai/settings/usage의 개발자도구 → Network → <code>usage</code> 요청 →
+            Request Headers의 <code>cookie</code> 줄 전체를 그대로 붙여넣으면 됩니다.
+            필요한 키 5개(<code>sessionKey</code>, <code>cf_clearance</code>, <code>__cf_bm</code>, <code>_cfuvid</code>, <code>routingHint</code>)만 사용하고 나머지는 무시돼요.
+          </p>
+        </div>
+      )}
       {apiActive && !open && (
         <p className="api-note ok">
-          ✓ Anthropic API에서 실시간 사용량을 받고 있어요. 캘리는 자동입니다.
+          ✓ Anthropic API에서 실시간 사용량을 받고 있어요.
         </p>
       )}
       {apiError && !open && (
@@ -869,16 +823,6 @@ function ApiSection({
       )}
       {open && (
         <div className="api-form">
-          <p className="api-help">
-            claude.ai 로그인 세션의 <code>sessionKey</code> 쿠키를 사용해
-            <code> /api/organizations/&lt;org&gt;/usage</code> 를 30초마다 조회합니다.
-            모든 데이터는 로컬에만 저장되고 외부로 전송되지 않습니다.
-          </p>
-          <ol className="api-help-list">
-            <li>claude.ai 접속 → 개발자도구(⌘⌥I) → Network 탭</li>
-            <li>아무 요청 클릭 → Request Headers에서 <code>cookie</code> 라인 전체 복사</li>
-            <li>Org ID는 같은 페이지 URL의 <code>/organizations/&lt;UUID&gt;/</code>에 있는 UUID</li>
-          </ol>
           <label>
             Organization ID
             <input
@@ -890,12 +834,12 @@ function ApiSection({
             />
           </label>
           <label>
-            세션 쿠키 (sessionKey 포함)
+            세션 쿠키 (5개만)
             <textarea
-              placeholder="sessionKey=sk-ant-sid01-...; intercom-session-...=..."
+              placeholder="sessionKey=sk-ant-sid02-...; cf_clearance=...; __cf_bm=...; _cfuvid=...; routingHint=[sk-ant-rh-...]"
               value={cookie}
               onChange={(e) => setCookie(e.target.value)}
-              rows={3}
+              rows={4}
               spellCheck={false}
             />
           </label>
@@ -936,33 +880,3 @@ function ApiSection({
   );
 }
 
-function PlaceholderPanda({ state }: { state: string }) {
-  return (
-    <svg
-      className="placeholder-panda"
-      viewBox="0 0 100 100"
-      data-state={state}
-      aria-hidden
-    >
-      <ellipse cx="50" cy="60" rx="32" ry="28" fill="#fff" stroke="#000" strokeWidth="2" />
-      <circle cx="30" cy="35" r="11" fill="#000" />
-      <circle cx="70" cy="35" r="11" fill="#000" />
-      <circle cx="50" cy="50" r="22" fill="#fff" stroke="#000" strokeWidth="2" />
-      {state === "sleep" || state === "dead" ? (
-        <>
-          <path d="M36 50 q5 -3 10 0" stroke="#000" strokeWidth="2" fill="none" />
-          <path d="M54 50 q5 -3 10 0" stroke="#000" strokeWidth="2" fill="none" />
-        </>
-      ) : (
-        <>
-          <circle cx="42" cy="50" r="3" fill="#000" />
-          <circle cx="58" cy="50" r="3" fill="#000" />
-        </>
-      )}
-      <ellipse cx="50" cy="60" rx="4" ry="3" fill="#000" />
-      {state === "dead" && (
-        <text x="50" y="80" fontSize="10" textAnchor="middle">×_×</text>
-      )}
-    </svg>
-  );
-}

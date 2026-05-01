@@ -1,58 +1,74 @@
 #!/usr/bin/env node
-// Build a panda app icon from src/skins/panda/idle.svg.
-// Renders a 1024×1024 PNG, places the panda on a soft circular background,
-// then defers to `tauri icon` to generate every required Tauri asset.
+// Build the app icon: the existing panda character (src/skins/panda/good.png)
+// cropped to just the head, placed on a soft gray rounded-square background.
+// Renders 1024×1024 → defers to `tauri icon` for every platform asset.
 
 import { spawnSync } from "node:child_process";
-import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import sharp from "sharp";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "..");
-const srcSvg = resolve(root, "src/skins/panda/idle.svg");
+const srcPng = resolve(root, "src/skins/panda/good.png");
 const outPng = resolve(root, "scripts/.icon-source.png");
 
-const pandaSvg = readFileSync(srcSvg, "utf8");
-// Strip the outermost <svg ...> tag and reuse the inner content inside a
-// composed background SVG.
-const inner = pandaSvg.replace(/^[\s\S]*?<svg[^>]*>/, "").replace(/<\/svg>\s*$/, "");
+const ICON_SIZE = 1024;
+const RADIUS = 232;
 
-const composedSvg = `
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+// 1) Crop the head from good.png (256×256). The head occupies roughly
+//    the top 60% of the canvas, near-full width.
+const meta = await sharp(srcPng).metadata();
+const W = meta.width;
+const H = meta.height;
+const cropLeft = Math.round(W * 0.05);
+const cropTop = 0;
+const cropWidth = W - cropLeft * 2;
+const cropHeight = Math.round(H * 0.6);
+
+const headBuf = await sharp(srcPng)
+  .extract({ left: cropLeft, top: cropTop, width: cropWidth, height: cropHeight })
+  .png()
+  .toBuffer();
+
+// 2) Resize the head into a square box that fits the icon canvas.
+const HEAD_BOX = ICON_SIZE - 220;
+const headResized = await sharp(headBuf)
+  .resize(HEAD_BOX, HEAD_BOX, {
+    fit: "contain",
+    background: { r: 0, g: 0, b: 0, alpha: 0 },
+  })
+  .toBuffer();
+
+// 3) Soft gray rounded-square background, mild radial highlight at top.
+const bgSvg = `
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${ICON_SIZE} ${ICON_SIZE}" width="${ICON_SIZE}" height="${ICON_SIZE}">
   <defs>
-    <radialGradient id="bg" cx="0.5" cy="0.42" r="0.7">
-      <stop offset="0" stop-color="#fff8ef"/>
-      <stop offset="1" stop-color="#f3d9b3"/>
+    <radialGradient id="bg" cx="0.5" cy="0.32" r="0.85">
+      <stop offset="0" stop-color="#dadce2"/>
+      <stop offset="1" stop-color="#a3a6ad"/>
     </radialGradient>
-    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
-      <feGaussianBlur in="SourceAlpha" stdDeviation="14"/>
-      <feOffset dy="6" result="off"/>
-      <feComponentTransfer><feFuncA type="linear" slope="0.35"/></feComponentTransfer>
-      <feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge>
-    </filter>
   </defs>
-  <rect width="1024" height="1024" rx="232" fill="url(#bg)"/>
-  <g filter="url(#shadow)" transform="translate(112 112) scale(3.125)">
-    ${inner}
-  </g>
+  <rect width="${ICON_SIZE}" height="${ICON_SIZE}" rx="${RADIUS}" fill="url(#bg)"/>
 </svg>
 `;
 
-const composedPath = resolve(root, "scripts/.icon-composed.svg");
-mkdirSync(dirname(composedPath), { recursive: true });
-writeFileSync(composedPath, composedSvg);
+mkdirSync(dirname(outPng), { recursive: true });
 
-await sharp(Buffer.from(composedSvg))
-  .resize(1024, 1024)
+// 4) Composite the head onto the background, slightly down-shifted so
+//    the visual mass sits at the optical center.
+const HEAD_OFFSET_Y = 20;
+const top = Math.round((ICON_SIZE - HEAD_BOX) / 2 + HEAD_OFFSET_Y);
+const left = Math.round((ICON_SIZE - HEAD_BOX) / 2);
+
+await sharp(Buffer.from(bgSvg))
+  .composite([{ input: headResized, top, left }])
   .png()
   .toFile(outPng);
 
 console.log(`generated ${outPng}`);
 
-// Hand off to tauri's icon generator — it produces every required size,
-// .icns, .ico, etc., into src-tauri/icons/.
 const r = spawnSync("npx", ["--yes", "@tauri-apps/cli@latest", "icon", outPng], {
   stdio: "inherit",
   cwd: root,

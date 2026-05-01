@@ -47,29 +47,30 @@ export type PlanConfig = {
 };
 
 // Anthropic does not publish exact 5h/weekly token limits per plan.
-// These are calibrated estimates (input + output + cache_creation), not
-// authoritative. Override via Custom or in Settings if your real % from
-// the Claude UI doesn't line up with what the pet shows.
+// Used only as fallback when the API path isn't configured.
 export const PLAN_PRESETS: Record<Exclude<PlanId, "custom">, PlanLimits> = {
   pro: { fiveHour: 5_000_000, weekly: 35_000_000 },
   max5x: { fiveHour: 25_000_000, weekly: 175_000_000 },
   max20x: { fiveHour: 100_000_000, weekly: 700_000_000 },
 };
 
-/// Energy tiers (battery-style: each tier is the LOWEST 'remaining %'
-/// across the 5h and weekly windows):
-///   idle      ≥ 80% — full energy, all actions available
-///   cheerful  60-80% — slightly less peppy
-///   tired     40-60% — middle ground
-///   weary     20-40% — slow, sluggish
-///   sleepy    0-20%  — about to drop
-///   sleep     5h limit hit (0%)        — knocked out
-///   dead      weekly limit hit (0%)    — collapsed
+/// Visual tier of the pet, derived from the LOWEST remaining %
+/// (min of 5h-remaining and weekly-remaining). Filenames in
+/// `src/skins/<skin>/` mirror these names 1:1.
+///   full   90-100%
+///   high   77-90%
+///   good   63-77%
+///   mid    49-63%
+///   low    33-49%
+///   tired  15-33%
+///   sleepy 0-15%   (also when 5h = 0%)
+///   dead   weekly = 0%
 export type PetState =
-  | "idle"
-  | "cheerful"
+  | "full"
+  | "high"
+  | "good"
+  | "mid"
+  | "low"
   | "tired"
-  | "weary"
   | "sleepy"
-  | "sleep"
   | "dead";

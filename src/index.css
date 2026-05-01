@@ -16,3 +16,12 @@ html, body, #root {
   user-select: none;
   -webkit-user-select: none;
 }
+
+/* Inputs must remain selectable/editable. WebKit in Tauri sometimes
+   inherits user-select:none into form controls; force it back on so the
+   Settings org-id / cookie fields accept paste and selection. */
+input,
+textarea {
+  user-select: text;
+  -webkit-user-select: text;
+}
