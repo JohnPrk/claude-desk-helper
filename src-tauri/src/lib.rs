@@ -475,10 +475,14 @@ fn open_settings_window(app: AppHandle) -> Result<(), String> {
     }
 
     let url = WebviewUrl::App("index.html?view=settings".into());
+    // Bumped from 440×620 to 600×680 — at the narrower size the
+    // "API 연동" link and the "🔔 어떻게 연결되나요?" chip wrapped onto
+    // two lines and clipped the cookie-flow diagram inside the help
+    // popup. 600 wide gives both sub-elements room without scrolling.
     let builder = WebviewWindowBuilder::new(&app, "settings", url)
         .title("Claude Desk Pet — 설정")
-        .inner_size(440.0, 620.0)
-        .min_inner_size(380.0, 480.0)
+        .inner_size(600.0, 680.0)
+        .min_inner_size(520.0, 560.0)
         .resizable(true)
         .decorations(true)
         .transparent(false)

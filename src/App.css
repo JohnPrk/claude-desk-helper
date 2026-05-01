@@ -639,17 +639,32 @@
   display: block;
   border-radius: 0;
 }
-/* Inner card is locked to a light gray surface regardless of system
-   theme — the outer purple-gray backdrop already gives the window its
-   mood, and a soft gray card sits on top without the eye-jarring
-   pure-white contrast while still keeping form text readable. */
+/* Inner card is locked to a soft warm gray, regardless of system theme.
+   The earlier near-white (#ececef) read as plain white at a glance and
+   broke the request for a visibly gray surface — this is darker and
+   carries a slight purple tint so it still belongs to the brand. The
+   matching padding on top and bottom (24px) keeps the title and the
+   action buttons equidistant from the card edges. */
 .settings-window .settings {
-  width: auto;
+  width: 100%;
+  max-width: 560px;
+  margin: 0 auto;
   max-height: none;
-  background: #ececef;
-  color: #222;
-  border: 1px solid #d6d3df;
+  background: #dcd9e3;
+  color: #1f1d28;
+  border: 1px solid #c2bccf;
   box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
+  padding: 24px;
+  /* Override the upstream .settings { gap: 8px } so sibling sections
+     (skin picker → API section → action row) can breathe. */
+  gap: 14px;
+}
+.settings-window .settings,
+.settings-window .settings * {
+  /* Force the dark-mode @media rule below to lose to this surface — the
+     gray card is a fixed light surface and we don't want emoji/tile
+     backgrounds to invert under a dark system theme. */
+  color-scheme: light;
 }
 .settings-window .settings h2,
 .settings-window .settings label,
@@ -702,7 +717,9 @@
 
 /* Visual character picker — swaps the old <select> for a clickable
    thumbnail grid. Each tile is a button with the skin's preview image
-   and name; the selected tile gets a purple ring matching the bubble. */
+   and name; the selected tile gets a purple ring matching the bubble.
+   Tiles inherit the gray card surface (no white box around the panda)
+   so the panda thumbnail blends into the settings card. */
 .skin-picker {
   display: flex;
   flex-direction: column;
@@ -724,8 +741,8 @@
   justify-content: center;
   gap: 4px;
   padding: 8px 6px;
-  background: #fff;
-  border: 2px solid #e3dffa;
+  background: transparent;
+  border: 2px solid transparent;
   border-radius: 10px;
   cursor: pointer;
   font: inherit;
@@ -753,9 +770,12 @@
 }
 @media (prefers-color-scheme: dark) {
   .skin-picker-label { color: #aaa; }
-  .skin-tile {
-    background: #2a2a32;
-    border-color: #3a3a44;
+  /* Settings window has its own fixed light surface, so the skin-tile
+     inside it must NOT pick up the dark-mode background. Scope the
+     dark override away from .settings-window. */
+  body:not(.settings-window-host) .skin-tile {
+    background: transparent;
+    border-color: transparent;
     color: #ddd;
   }
   .skin-tile.selected {
@@ -871,18 +891,21 @@
   display: flex;
   flex-direction: column;
   gap: 6px;
-  /* Breathing room between the skin picker above and the API toggle.
-     The picker grid runs flush to the bottom of its container, so without
-     this margin the "API 연동" link sits visually glued to the last skin
-     tile. */
-  margin-top: 14px;
-  padding-top: 12px;
-  border-top: 1px solid #d6d3df;
+  /* Significant breathing room around the divider that separates the
+     skin picker from the API section — earlier 14px felt cramped and
+     made the "🔔 어떻게 연결되나요?" chip wrap. The 22px on both sides
+     of the rule mirrors the title/action vertical rhythm. */
+  margin-top: 22px;
+  padding-top: 22px;
+  border-top: 1px solid #b8b1cc;
 }
 .api-section-head {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 12px;
+  /* Allow the link and chip to share the row without forcing a wrap on
+     narrow Korean labels. flex-wrap is a fallback for very narrow widths. */
+  flex-wrap: wrap;
 }
 .api-section-head .link { flex: 0 0 auto; }
 .api-note {
