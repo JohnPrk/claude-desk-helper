@@ -23,9 +23,9 @@ import "./App.css";
 // Action set + wait gap, conditioned on the panda's current energy tier.
 // Energetic actions only happen at upper tiers; sluggish ones at lower.
 function allowedActionsFor(state: string) {
-  const energetic = new Set(["roll", "jump", "spin", "run", "front-roll", "exercise", "wave"]);
-  const calm = new Set(["bamboo", "eat-fruit", "scratch", "shy", "wave"]);
-  const sluggish = new Set(["doze", "lying", "scratch", "shy"]);
+  const energetic = new Set(["roll", "jump", "run"]);
+  const calm = new Set(["scratch", "wobble", "squish"]);
+  const sluggish = new Set(["scratch", "wobble"]);
 
   let names: Set<string>;
   switch (state) {
@@ -35,7 +35,7 @@ function allowedActionsFor(state: string) {
       names = new Set([...energetic, ...calm]);
       break;
     case "mid":
-      names = new Set([...calm, "spin", "wave"]);
+      names = new Set([...calm, "jump"]);
       break;
     case "low":
     case "tired":
@@ -73,35 +73,19 @@ function waitMsFor(state: string): [number, number] {
 type IdleAction =
   | "none"
   | "roll"
-  | "bamboo"
   | "jump"
-  | "spin"
   | "run"
-  | "shy"
-  | "doze"
   | "scratch"
-  | "wave"
-  | "lying"
-  | "front-roll"
-  | "eat-fruit"
-  | "exercise";
+  | "wobble"
+  | "squish";
 
 const IDLE_ACTIONS: ReadonlyArray<{ name: Exclude<IdleAction, "none">; durationMs: number }> = [
-  // Existing
-  { name: "roll", durationMs: 1600 },
-  { name: "bamboo", durationMs: 4500 },
-  { name: "jump", durationMs: 1200 },
-  { name: "spin", durationMs: 1800 },
-  { name: "run", durationMs: 2500 },
-  { name: "shy", durationMs: 2800 },
-  { name: "doze", durationMs: 3800 },
-  { name: "scratch", durationMs: 3000 },
-  // New
-  { name: "wave", durationMs: 2000 },        // 인사 (앞발 들기)
-  { name: "lying", durationMs: 4000 },        // 누워서 뒹굴뒹굴
-  { name: "front-roll", durationMs: 1400 },   // 앞구르기
-  { name: "eat-fruit", durationMs: 4000 },    // 사과 먹기
-  { name: "exercise", durationMs: 3200 },     // 운동
+  { name: "roll", durationMs: 3800 },     // 3.8s × 1
+  { name: "jump", durationMs: 3800 },     // 3.8s × 1
+  { name: "run", durationMs: 6300 },      // 1.05s × 6
+  { name: "scratch", durationMs: 4500 },  // 1.5s × 3 → 4.5s
+  { name: "wobble", durationMs: 2700 },   // 0.9s × 3
+  { name: "squish", durationMs: 1260 },   // 1.26s × 1
 ];
 
 // Battery-style: notify when remaining drops to these thresholds.
@@ -117,10 +101,11 @@ type View = "loading" | "pet";
 // settings popup ("settings"), and the first-run onboarding popup
 // ("onboarding"). The non-main ones are launched with ?view=<name> so
 // we branch at the top of the React tree.
-function viewFromUrl(): "settings" | "onboarding" | null {
+function viewFromUrl(): "settings" | "onboarding" | "preview" | null {
   const v = new URLSearchParams(window.location.search).get("view");
   if (v === "settings") return "settings";
   if (v === "onboarding") return "onboarding";
+  if (v === "preview") return "preview";
   return null;
 }
 
@@ -128,7 +113,110 @@ export default function App() {
   const v = viewFromUrl();
   if (v === "settings") return <SettingsApp />;
   if (v === "onboarding") return <OnboardingApp />;
+  if (v === "preview") return <AnimPreviewApp />;
   return <PetApp />;
+}
+
+const PREVIEW_ACTIONS: Exclude<IdleAction, "none">[] = [
+  "roll",
+  "jump",
+  "run",
+  "scratch",
+  "wobble",
+  "squish",
+];
+
+const PREVIEW_LABELS: Record<Exclude<IdleAction, "none">, string> = {
+  roll: "roll · 3.8s",
+  jump: "jump · 3.8s + shadow",
+  run: "run · 1.05s ×6 + wind",
+  scratch: "scratch · 1.5s ×3",
+  wobble: "wobble · 0.9s ×3",
+  squish: "squish · 1.26s + impact",
+};
+
+const PREVIEW_FLASHES: Array<{ kind: "hit" | "miss"; label: string }> = [
+  { kind: "hit", label: "flash-hit · 노란 폭죽" },
+  { kind: "miss", label: "flash-miss · 비 (우는 톤)" },
+];
+
+function AnimPreviewApp() {
+  const skin = findSkin(DEFAULT_SKIN_ID);
+  const stillSrc = skin.frames.good;
+  const [state] = useState<"full" | "high" | "good" | "mid" | "low" | "tired" | "sleepy">("good");
+
+  return (
+    <div className="preview-root">
+      <header className="preview-header">
+        <h1>Anim Preview</h1>
+        <p>
+          12개 idle 액션 + 캐시 hit/miss flash를 동시에 무한 반복. App.css의 keyframe·duration·timing을 고치면 Vite HMR로 즉시 반영됩니다.
+        </p>
+      </header>
+      <div className="preview-grid">
+        {PREVIEW_ACTIONS.map((action) => (
+          <div key={action} className="preview-cell">
+            <div className="preview-stage">
+              <div className="character" data-state={state} data-action={action}>
+                <img src={stillSrc} alt={action} draggable={false} />
+                {action === "scratch" && (
+                  <img className="bamboo bamboo-scratch" src={ACCESSORIES.bamboo} alt="" draggable={false} />
+                )}
+                {action === "run" && (
+                  <div className="wind-streaks" aria-hidden>
+                    <span className="streak streak-1" />
+                    <span className="streak streak-2" />
+                    <span className="streak streak-3" />
+                  </div>
+                )}
+                {action === "jump" && <div className="jump-shadow" aria-hidden />}
+                {action === "squish" && <div className="squish-impact" aria-hidden />}
+              </div>
+            </div>
+            <div className="preview-label">{PREVIEW_LABELS[action]}</div>
+          </div>
+        ))}
+        {PREVIEW_FLASHES.map(({ kind, label }) => (
+          <div key={`flash-${kind}`} className="preview-cell">
+            <div className="preview-stage">
+              <div className="character" data-state={state} data-flash={kind}>
+                <img src={stillSrc} alt={`flash-${kind}`} draggable={false} />
+                {kind === "hit" && (
+                  <div className="firework" aria-hidden>
+                    {[1, 2, 3, 4, 5, 6, 7, 8].map((i) => (
+                      <span key={i} className={`spark spark-${i}`} />
+                    ))}
+                  </div>
+                )}
+                {kind === "miss" && (
+                  <div className="rain" aria-hidden>
+                    {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16].map((i) => (
+                      <span key={i} className={`drop drop-${i}`} />
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+            <div className="preview-label">{label}</div>
+          </div>
+        ))}
+        <div className="preview-cell">
+          <div className="preview-stage">
+            <div className="character" data-state="disconnected">
+              <img src={stillSrc} alt="disconnected" draggable={false} />
+              <img
+                className="disconnected-sign"
+                src={ACCESSORIES.disconnectedSign}
+                alt="연결 실패"
+                draggable={false}
+              />
+            </div>
+          </div>
+          <div className="preview-label">disconnected · 연결 실패 표지판</div>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function PetApp() {
@@ -501,7 +589,9 @@ function Pet({
     else if (m > seenCounts.misses) trigger = "miss";
     if (trigger) {
       setFlash(trigger);
-      const t = setTimeout(() => setFlash(null), 900);
+      // hit glow는 0.9s, miss 비는 2.2s + delay → 가장 늦은 drop이 끝날 때까지 유지
+      const dur = trigger === "miss" ? 4000 : 1200;
+      const t = setTimeout(() => setFlash(null), dur);
       setSeenCounts({ hits: h, misses: m });
       return () => clearTimeout(t);
     }
@@ -543,19 +633,11 @@ function Pet({
     };
   }, [d.petState]);
 
-  // Tray title. The bamboo silhouette icon (set in lib.rs as a
-  // template PNG) carries the brand mark, so the default state shows
-  // just the percentage. Warning states get a leading state emoji to
-  // catch the eye even at the corner of the menu bar.
+  // Tray title. 4단계 PNG 트레이 아이콘(대나무 → 죽순 → 시든 잎)이 상태를
+  // 전부 표현하므로, 텍스트 라벨은 % 만 남겨 중복을 제거한다.
   useEffect(() => {
     const remaining = d.fiveHourRemaining;
-    const prefix =
-      d.petState === "disconnected" ? "🔌 " :
-      d.petState === "dead" ? "🍂 " :
-      remaining <= 0.15 ? "🥱 " :
-      remaining <= 0.49 ? "🌾 " :
-      "";
-    const title = `${prefix}${Math.round(remaining * 100)}%`;
+    const title = `${Math.round(remaining * 100)}%`;
     invoke("set_tray_title", { title }).catch(() => {});
     invoke("set_tray_icon_for_remaining", { remaining }).catch(() => {});
   }, [d.fiveHourRemaining, d.petState]);
@@ -675,29 +757,38 @@ function Pet({
           onError={() => setImgFailed(true)}
           onLoad={() => setImgFailed(false)}
         />
-        {(idleAction === "bamboo" || idleAction === "scratch") && (
+        {d.petState === "disconnected" && (
           <img
-            className={`bamboo bamboo-${idleAction}`}
-            src={ACCESSORIES.bamboo}
-            alt=""
+            className="disconnected-sign"
+            src={ACCESSORIES.disconnectedSign}
+            alt="연결 실패"
             draggable={false}
           />
         )}
-        {idleAction === "eat-fruit" && (
-          <img className="bamboo bamboo-eat-fruit" src={ACCESSORIES.apple} alt="" draggable={false} />
+        {idleAction === "scratch" && (
+          <img className="bamboo bamboo-scratch" src={ACCESSORIES.bamboo} alt="" draggable={false} />
         )}
-        {idleAction === "exercise" && (
-          <img className="bamboo bamboo-exercise" src={ACCESSORIES.dumbbell} alt="" draggable={false} />
+        {idleAction === "run" && (
+          <div className="wind-streaks" aria-hidden>
+            <span className="streak streak-1" />
+            <span className="streak streak-2" />
+            <span className="streak streak-3" />
+          </div>
         )}
-        {idleAction === "shy" && <span className="action-emoji shy-emoji">💕</span>}
-        {idleAction === "run" && <span className="action-emoji run-emoji">💨</span>}
-        {idleAction === "jump" && <span className="action-emoji jump-emoji">!</span>}
-        {idleAction === "doze" && <span className="action-emoji doze-emoji">z</span>}
-        {idleAction === "wave" && <span className="action-emoji wave-emoji">👋</span>}
-        {idleAction === "exercise" && <span className="action-emoji exercise-emoji">💪</span>}
-        {flash && (
-          <div className={`flash-overlay flash-${flash}`}>
-            <span className="flash-mark">{flash === "hit" ? "✨" : "💨"}</span>
+        {idleAction === "jump" && <div className="jump-shadow" aria-hidden />}
+        {idleAction === "squish" && <div className="squish-impact" aria-hidden />}
+        {flash === "hit" && (
+          <div className="firework" aria-hidden>
+            {[1, 2, 3, 4, 5, 6, 7, 8].map((i) => (
+              <span key={i} className={`spark spark-${i}`} />
+            ))}
+          </div>
+        )}
+        {flash === "miss" && (
+          <div className="rain" aria-hidden>
+            {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16].map((i) => (
+              <span key={i} className={`drop drop-${i}`} />
+            ))}
           </div>
         )}
       </div>

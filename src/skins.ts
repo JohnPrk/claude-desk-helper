@@ -8,14 +8,10 @@ import pandaTired from "./skins/panda/tired.png";
 import pandaSleepy from "./skins/panda/sleepy.png";
 import pandaDead from "./skins/panda/dead.png";
 
-// Placeholder for the `disconnected` state — shown when claude.ai's
-// API rejects our request (expired cookie, Cloudflare challenge, etc.).
-// Currently reuses apple.png as a visibly different stand-in so the
-// user can see "something is off". To finish this state, drop a real
-// `src/skins/panda/disconnected.png` (256×256, transparent PNG) into
-// the panda folder and switch this import to:
-//   import pandaDisconnected from "./skins/panda/disconnected.png";
-import pandaDisconnected from "./skins/panda/apple.png";
+// disconnected 상태에서는 캐릭터 본체는 평소 모습(good)을 그대로 쓰고,
+// 그 위에 "연결 실패" 나무 표지판 오버레이를 캐릭터 앞에 띄운다.
+import pandaDisconnected from "./skins/panda/good.png";
+import pandaDisconnectedSign from "./skins/panda/disconnected_sign.png";
 
 import pandaBamboo from "./skins/panda/bamboo.png";
 import pandaApple from "./skins/panda/apple.png";
@@ -26,18 +22,11 @@ import pandaDumbbell from "./skins/panda/dumbbell.png";
 // motion via the gif itself instead of relying on CSS transforms.
 export type ActionName =
   | "roll"
-  | "bamboo"
   | "jump"
-  | "spin"
   | "run"
-  | "shy"
-  | "doze"
   | "scratch"
-  | "wave"
-  | "lying"
-  | "front-roll"
-  | "eat-fruit"
-  | "exercise";
+  | "wobble"
+  | "squish";
 
 export type Skin = {
   id: string;
@@ -79,6 +68,7 @@ export const ACCESSORIES = {
   bamboo: pandaBamboo,
   apple: pandaApple,
   dumbbell: pandaDumbbell,
+  disconnectedSign: pandaDisconnectedSign,
 };
 
 export const DEFAULT_SKIN_ID = "panda";
