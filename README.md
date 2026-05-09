@@ -2,7 +2,7 @@
 
 > 데스크톱 한구석에서 너의 Claude 토큰 잔량을 지켜봐주는 작은 판다.
 
-[![Download .dmg](https://img.shields.io/badge/Download-.dmg%20v1.17.0-6b4cff?style=for-the-badge&logo=apple)](https://github.com/JohnPrk/token-panda/releases/latest/download/token-panda_1.17.0_aarch64.dmg)
+[![Download .dmg](https://img.shields.io/badge/Download-.dmg%20v1.22.0-6b4cff?style=for-the-badge&logo=apple)](https://github.com/JohnPrk/token-panda/releases/latest/download/token-panda_1.22.0_aarch64.dmg)
 [![macOS only](https://img.shields.io/badge/platform-macOS%2011%2B-lightgrey?style=for-the-badge&logo=apple)](#한계)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge)](#라이선스)
 
@@ -215,6 +215,7 @@ claude.ai에 다시 들어가 쿠키 줄을 복사해 붙여넣고 `저장`만 �
 
 | 버전 | 날짜 | 주요 변경 |
 | --- | --- | --- |
+| **1.2** | 2026-05-09 | **멀티 계정 시스템.** 계정 여러 개 등록·전환·편집·삭제. 트레이 메뉴에 "계정 전환 ▸" 서브메뉴, 활성 계정의 캐릭터로 트레이 아이콘 자동 swap (캐릭터 추가 시 PNG만 더하면 동작하는 구조). 카드 본체 클릭이 활성 카드면 편집, 비활성이면 활성 전환 |
 | **1.1** | 2026-05-03 | 단위 테스트 도입(vitest 8건), dmg 파일명 ASCII 통일(한글 prefix 404 수정), disconnected 알림 가드, Gatekeeper 우회 가이드, 트레이 버전 라벨 |
 | **1.0** 🎉 | 2026-05-02 | **출시 마일스톤.** disconnected 상태 표지판, flash-hit 노란 폭죽, flash-miss 푸른 비, idle 액션 속도 조정, 대나무 그림자 |
 | 0.9 | 2026-05-02 | idle 액션 시스템 완성 — wobble·squish 추가로 6종. jump 그림자·squish 임팩트 링. 출시 직전 폴리시 |
